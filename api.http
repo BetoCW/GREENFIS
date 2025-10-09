@@ -1,0 +1,15 @@
+###Recuperar todas las peliculas
+GET http://localhost:3000/
+
+###Insertar un usuario
+POST http://localhost:3000/
+Content-Type: application/json
+
+{
+  "nombre": "Persona de Prueva",
+  "correo": "persona.prueva@greenfis.com",
+  "contrasena": "password123",
+  "sucursal_id": 1,
+  "activo": 1,
+  "rol": "gerente"
+}
