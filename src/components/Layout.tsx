@@ -2,6 +2,34 @@ import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Menu, X, Users, Package, FileText, BarChart3, Settings, Gift } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useAuth } from '../context/AuthContext';
+import { useNavigate } from 'react-router-dom';
+
+const HeaderAccount: React.FC = () => {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
+
+  if (!user) {
+    return (
+      <Link to="/login" className="text-green-primary font-semibold">Iniciar sesión</Link>
+    );
+  }
+
+  return (
+    <div className="flex items-center space-x-3">
+      <div className="text-sm">
+        <div className="font-semibold">{user.name}</div>
+        <div className="text-xs text-gray-500 capitalize">{user.role}</div>
+      </div>
+      <button onClick={handleLogout} className="text-sm text-red-500 hover:underline">Cerrar sesión</button>
+    </div>
+  );
+};
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -19,6 +47,20 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { icon: Package, label: 'Gestionar Inventario', path: '/gestionar-inventario' },
     { icon: Settings, label: 'Registro Producto', path: '/registro-producto' },
     { icon: Gift, label: 'Promociones', path: '/promociones' },
+  ];
+
+  const { user } = useAuth();
+  const employeeMenu = [
+    { icon: BarChart3, label: 'Ventas', path: '/employee/ventas' },
+    { icon: FileText, label: 'Generar Venta', path: '/employee/venta/nuevo' },
+    { icon: Package, label: 'Corte de Caja', path: '/employee/corte' },
+    { icon: BarChart3, label: 'Reportes', path: '/employee/reportes' }
+  ];
+
+  const warehouseMenu = [
+    { icon: Package, label: 'Inventario', path: '/inventario' },
+    { icon: BarChart3, label: 'Reportes de Inventario', path: '/inventario/reportes' },
+    { icon: FileText, label: 'Solicitudes de Reabastecimiento', path: '/inventario/solicitudes' }
   ];
 
   return (
@@ -40,8 +82,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               <span className="text-xl font-bold text-green-primary">GreenFis</span>
             </div>
           </div>
-          <div className="text-sm text-text-dark">
-            Bienvenido, <span className="font-semibold">Gerente</span>
+          <div className="text-sm text-text-dark flex items-center space-x-3">
+            <HeaderAccount />
           </div>
         </div>
       </header>
@@ -59,7 +101,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             >
               <nav className="p-4">
                 <ul className="space-y-2">
-                  {menuItems.map((item) => (
+                  {(
+                    user && user.role === 'almacenista' ? warehouseMenu :
+                    user && user.role === 'empleado' ? employeeMenu :
+                    menuItems
+                  ).map((item) => (
                     <li key={item.path}>
                       <Link
                         to={item.path}
