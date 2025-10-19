@@ -3,8 +3,8 @@ import { Plus, Edit, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { faker } from '@faker-js/faker';
-import Button from '../components/Button';
-import Table from '../components/Table';
+import Button from '../../components/Button';
+import Table from '../../components/Table';
 
 interface Product {
   id: string;

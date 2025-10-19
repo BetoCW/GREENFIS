@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import Button from '../components/Button';
-import FormField from '../components/FormField';
+import Button from '../../components/Button';
+import FormField from '../../components/FormField';
 
 const UserRegistration: React.FC = () => {
   const [formData, setFormData] = useState({

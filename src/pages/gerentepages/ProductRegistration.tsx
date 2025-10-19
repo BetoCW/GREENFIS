@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import Button from '../components/Button';
-import FormField from '../components/FormField';
+import Button from '../../components/Button';
+import FormField from '../../components/FormField';
 
 const ProductRegistration: React.FC = () => {
   const navigate = useNavigate();

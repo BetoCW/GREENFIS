@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { FileText, Plus, Edit, Trash2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { faker } from '@faker-js/faker';
-import Button from '../components/Button';
-import Table from '../components/Table';
+import Button from '../../components/Button';
+import Table from '../../components/Table';
 
 interface Promotion {
   id: string;

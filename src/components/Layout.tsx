@@ -1,18 +1,17 @@
 import React, { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { Menu, X, Users, Package, FileText, BarChart3, Settings, Gift } from 'lucide-react';
+import { Link, useLocation, Outlet } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import { Menu, X, Users, Package, FileText, BarChart3, Settings, Gift, ShoppingCart, DollarSign } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-interface LayoutProps {
-  children: React.ReactNode;
-}
-
-const Layout: React.FC<LayoutProps> = ({ children }) => {
+const Layout: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const location = useLocation();
+  const { user } = useAuth();
 
-  const menuItems = [
-    { icon: BarChart3, label: 'Dashboard', path: '/' },
+  // Menu for gerente / default
+  const gerenteMenu = [
+    { icon: BarChart3, label: 'Dashboard', path: '/dashboard' },
     { icon: Users, label: 'Registrar Usuario', path: '/registro-usuario' },
     { icon: FileText, label: 'Gestionar Solicitudes', path: '/gestionar-solicitudes' },
     { icon: BarChart3, label: 'Reportes de Venta', path: '/reportes-venta' },
@@ -20,6 +19,19 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { icon: Settings, label: 'Registro Producto', path: '/registro-producto' },
     { icon: Gift, label: 'Promociones', path: '/promociones' },
   ];
+
+  // Menu for vendedor
+  const vendedorMenu = [
+    { icon: BarChart3, label: 'Dashboard', path: '/vendedor/dashboard' },
+    { icon: ShoppingCart, label: 'Punto de Venta', path: '/vendedor/pdv' },
+    { icon: Package, label: 'Inventario Tienda', path: '/vendedor/inventario' },
+    { icon: FileText, label: 'Solicitudes Reabastecimiento', path: '/vendedor/reabastecimiento' },
+    { icon: BarChart3, label: 'Historial de Ventas', path: '/vendedor/historial-ventas' },
+    { icon: DollarSign, label: 'Corte de Caja', path: '/vendedor/corte-caja' },
+    { icon: Gift, label: 'Promociones', path: '/vendedor/promociones' },
+  ];
+
+  const menuItems = user && user.role === 'vendedor' ? vendedorMenu : gerenteMenu;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -41,7 +53,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             </div>
           </div>
           <div className="text-sm text-text-dark">
-            Bienvenido, <span className="font-semibold">Gerente</span>
+            Bienvenido, <span className="font-semibold">{user ? user.name : 'Invitado'}</span>
           </div>
         </div>
       </header>
@@ -83,7 +95,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
         {/* Main Content */}
         <main className="flex-1 p-6">
-          {children}
+          <Outlet />
         </main>
       </div>
 
