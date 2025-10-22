@@ -3,9 +3,11 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 type Role = 'gerente' | 'almacenista' | 'vendedor' | 'unknown';
 
 type User = {
+  id: number;
   name: string;
   email: string;
   role: Role;
+  sucursal_id?: number;
 };
 
 type AuthContextType = {
@@ -43,7 +45,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (email: string, _password: string) => {
     // Simulate simple auth: accept any password, infer role by email
     const role = detectRole(email);
-    const newUser: User = { name: email.split('@')[0], email, role };
+    // set default ids that match the seeded DB in GreenFis.sql (for dev convenience)
+    let id = 99;
+    let sucursal_id = 1;
+    if (role === 'gerente') { id = 1; sucursal_id = 1; }
+    else if (role === 'vendedor') { id = 2; sucursal_id = 1; }
+    else if (role === 'almacenista') { id = 3; sucursal_id = 1; }
+    const newUser: User = { id, name: email.split('@')[0], email, role, sucursal_id };
     setUser(newUser);
     return newUser;
   };

@@ -8,10 +8,10 @@ USE GreenFis;
 GO
 
 -- =============================================
--- TABLAS MAESTRAS Y CONFIGURACIÃ“N
+-- TABLAS MAESTRAS Y CONFIGURACIÓN
 -- =============================================
 
--- Tabla de categorÃ­as para mejor normalizaciÃ³n
+-- Tabla de categorías para mejor normalización
 CREATE TABLE categorias (
     id INT PRIMARY KEY IDENTITY(1,1),
     nombre VARCHAR(100) NOT NULL UNIQUE,
@@ -51,11 +51,12 @@ CREATE TABLE usuarios(
     contrasena VARCHAR(255) NOT NULL,
     sucursal_id INT,
     activo BIT DEFAULT 1,
-    rol VARCHAR(10) NOT NULL CHECK(rol IN('gerente', 'almacenista', 'vendedor')),
+    rol VARCHAR(15) NOT NULL CHECK(rol IN('gerente', 'almacenista', 'vendedor')),
     fecha_creacion DATETIME2 DEFAULT GETDATE(),
     fecha_ultimo_login DATETIME2,
     FOREIGN KEY (sucursal_id) REFERENCES sucursales(id_sucursal)
 );
+
 
 -- Actualizar tabla sucursales para agregar encargado (depende de usuarios)
 ALTER TABLE sucursales 
@@ -273,13 +274,13 @@ CREATE TABLE reportes (
     generado_por INT NOT NULL,
     fecha_generacion DATETIME2 DEFAULT GETDATE(),
     archivo_path VARCHAR(500),
-    parametros TEXT, -- JSON con parÃ¡metros del reporte
+    parametros TEXT, -- JSON con parámetros del reporte
     FOREIGN KEY (sucursal_id) REFERENCES sucursales(id_sucursal),
     FOREIGN KEY (generado_por) REFERENCES usuarios(id_usuario)
 );
 
 -- =============================================
--- TABLAS DE AUDITORÃA Y LOGS
+-- TABLAS DE AUDITORÍA Y LOGS
 -- =============================================
 
 CREATE TABLE auditoria_inventario (
@@ -308,37 +309,37 @@ CREATE TABLE logs_sistema (
 );
 
 -- =============================================
--- ÃNDICES PARA MEJOR PERFORMANCE
+-- ÍNDICES PARA MEJOR PERFORMANCE
 -- =============================================
 
--- Ãndices para ventas
+-- Índices para ventas
 CREATE INDEX IX_ventas_fecha ON ventas(fecha_venta);
 CREATE INDEX IX_ventas_vendedor ON ventas(vendedor_id);
 CREATE INDEX IX_ventas_sucursal ON ventas(sucursal_id);
 CREATE INDEX IX_ventas_estado ON ventas(estado);
 
--- Ãndices para inventarios
+-- Índices para inventarios
 CREATE INDEX IX_inventario_tienda_sucursal ON inventario_tienda(sucursal_id);
 CREATE INDEX IX_inventario_tienda_producto ON inventario_tienda(producto_id);
 CREATE INDEX IX_inventario_almacen_producto ON inventario_almacen(producto_id);
 
--- Ãndices para detalle_ventas
+-- Índices para detalle_ventas
 CREATE INDEX IX_detalle_ventas_venta ON detalle_ventas(venta_id);
 CREATE INDEX IX_detalle_ventas_producto ON detalle_ventas(producto_id);
 
--- Ãndices para solicitudes y transferencias
+-- Índices para solicitudes y transferencias
 CREATE INDEX IX_solicitudes_estado ON solicitudes_reabastecimiento(estado);
 CREATE INDEX IX_solicitudes_sucursal ON solicitudes_reabastecimiento(sucursal_id);
 CREATE INDEX IX_transferencias_estado ON transferencias_inventario(estado);
 CREATE INDEX IX_pedidos_proveedores_estado ON pedidos_proveedores(estado);
 
--- Ãndices para reportes y auditorÃ­a
+-- Índices para reportes y auditoría
 CREATE INDEX IX_reportes_fecha ON reportes(fecha_generacion);
 CREATE INDEX IX_auditoria_fecha ON auditoria_inventario(fecha_accion);
 CREATE INDEX IX_logs_fecha ON logs_sistema(fecha_log);
 
 -- =============================================
--- TRIGGERS PARA AUDITORÃA AUTOMÃTICA
+-- TRIGGERS PARA AUDITORÍA AUTOMÁTICA
 -- =============================================
 
 CREATE TRIGGER TR_productos_auditoria
@@ -388,7 +389,7 @@ END;
 GO
 
 -- =============================================
--- VISTAS ÃšTILES PARA CONSULTAS FRECUENTES
+-- VISTAS ÚTILES PARA CONSULTAS FRECUENTES
 -- =============================================
 
 CREATE VIEW vw_inventario_completo AS
@@ -439,33 +440,14 @@ JOIN productos p ON dv.producto_id = p.id
 LEFT JOIN promociones prom ON dv.promocion_id = prom.id;
 GO
 
--- Vista que expone productos con su stock por sucursal (une productos e inventario_tienda)
-CREATE VIEW vw_productos_stock AS
-SELECT
-    p.id AS id,
-    p.nombre AS nombre,
-    p.precio AS precio,
-    it.sucursal_id AS sucursal_id,
-    ISNULL(it.cantidad, 0) AS cantidad,
-    ISNULL(p.stock_minimo, 0) AS stock_minimo,
-    CASE
-        WHEN ISNULL(it.cantidad, 0) = 0 THEN 'AGOTADO'
-        WHEN ISNULL(it.cantidad, 0) <= ISNULL(p.stock_minimo, 0) THEN 'BAJO'
-        ELSE 'NORMAL'
-    END AS estado_stock
-FROM productos p
-LEFT JOIN inventario_tienda it ON p.id = it.producto_id
-WHERE p.activo = 1;
-GO
-
 -- =============================================
--- DATOS INICIALES DE CONFIGURACIÃ“N
+-- DATOS INICIALES DE CONFIGURACIÓN
 -- =============================================
 
--- Insertar categorÃ­as bÃ¡sicas
+-- Insertar categorías básicas
 INSERT INTO categorias (nombre, descripcion) VALUES
-('ElectrÃ³nicos', 'Dispositivos electrÃ³nicos y tecnologÃ­a'),
-('Hogar', 'ArtÃ­culos para el hogar'),
+('Electrónicos', 'Dispositivos electrónicos y tecnología'),
+('Hogar', 'Artículos para el hogar'),
 ('Deportes', 'Equipo y ropa deportiva'),
 ('Ropa', 'Prendas de vestir'),
 ('Alimentos', 'Productos alimenticios');
@@ -476,12 +458,15 @@ INSERT INTO sucursales (nombre, direccion, telefono) VALUES
 ('Sucursal Norte', 'Zona Norte #456', '555-0002'),
 ('Sucursal Sur', 'Zona Sur #789', '555-0003');
 
--- Insertar usuario gerente inicial (contraseÃ±a temporal)
+-- Insertar usuario gerente inicial (contraseña temporal)
 INSERT INTO usuarios (nombre, correo, contrasena, sucursal_id, rol) VALUES
 ('Gerente Principal', 'gerente@greenfis.com', 'pasword', 1, 'gerente'),
 ('Vendedor Sucursal1', 'vendedor@greenfis.com', 'pasword', 1, 'vendedor'),
-('Almacenista', 'almacenista@greenfis.com', 'password', 1, 'almacenista');
+('almacenista', 'almacenista@greenfis.com', 'password', 1, 'almacenista');
 
+
+INSERT INTO usuarios (nombre, correo, contrasena, sucursal_id, rol) VALUES
+('almacenista', 'almacenista@greenfis.com', 'password',1,'almacenista')
 
 -- Actualizar sucursal con gerente
 UPDATE sucursales SET encargado_id = 1 WHERE id_sucursal = 1;

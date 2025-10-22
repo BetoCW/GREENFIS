@@ -34,7 +34,7 @@ export async function fetchProducts() {
     const res = await fetch(`${BASE}/api/vendedor/productos`);
     if (!res.ok) throw new Error('API error');
     const data = await res.json();
-    return data.map((p: any) => ({ id: String(p.id || p.producto_id), nombre: p.nombre, precio: parseFloat(p.precio || 0), codigo_barras: p.codigo_barras }));
+    return data.map((p: any) => ({ id: String(p.id || p.producto_id), nombre: p.nombre, precio: parseFloat(p.precio || 0), codigo_barras: p.codigo_barras, cantidad: Number(p.cantidad ?? p.cantidad_tienda ?? 0), descripcion: p.descripcion || '' }));
   } catch (e) {
     return readStore('gf_products', []);
   }
@@ -44,21 +44,31 @@ export async function postVenta(payload: any, vendedor_id: number = DEFAULT_VEND
   try {
     const body = { ...payload, vendedor_id, sucursal_id };
     const res = await fetch(`${BASE}/api/vendedor/ventas`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (!res.ok) throw new Error('API error');
+    if (!res.ok) {
+      // try to capture server response text to help debugging
+      let txt = '';
+      try { txt = await res.text(); } catch (e) { txt = String(e); }
+      console.error('postVenta server error', res.status, txt);
+      throw new Error(`Server error ${res.status}: ${txt || res.statusText}`);
+    }
     const json = await res.json();
     return json;
   } catch (e) {
     // fallback: write to localStore gf_sales
   const salesRaw = readStore('gf_sales', [] as any[]);
   const sales = Array.isArray(salesRaw) ? salesRaw : [];
-  sales.unshift(payload);
+  // include vendedor_id and sucursal_id if provided
+  const savedSale = { ...payload, vendedor_id: (payload.vendedor_id ?? payload.vendedorId ?? null), sucursal_id: (payload.sucursal_id ?? payload.sucursalId ?? null) };
+  sales.unshift(savedSale);
   writeStore('gf_sales', sales);
     // also decrement local product stock
     const products = readStore('gf_products', []);
     const updated = products.map((p: any) => {
-      const it = payload.items.find((i: any) => i.productId === p.id || i.productId === String(p.id));
+      // support both shapes: { productId, qty } and { producto_id, cantidad }
+      const it = payload.items.find((i: any) => (i.productId && (i.productId === p.id || i.productId === String(p.id))) || (i.producto_id && (String(i.producto_id) === String(p.id))));
       if (!it) return p;
-      return { ...p, cantidad: Math.max(0, p.cantidad - it.qty) };
+      const qty = (it.qty ?? it.cantidad ?? 0);
+      return { ...p, cantidad: Math.max(0, p.cantidad - qty) };
     });
     writeStore('gf_products', updated);
     return { ok: true };
@@ -68,14 +78,25 @@ export async function postVenta(payload: any, vendedor_id: number = DEFAULT_VEND
 export async function postSolicitud(body: any) {
   try {
     const res = await fetch(`${BASE}/api/vendedor/solicitudes`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (!res.ok) throw new Error('API error');
-    return await res.json();
-  } catch (e) {
-  const listRaw = readStore('gf_requests', [] as any[]);
-  const list = Array.isArray(listRaw) ? listRaw : [];
-  const saved = { id: `REQ-${Date.now()}`, ...body, estado: 'pendiente', fecha: new Date().toISOString() };
-  list.unshift(saved);
-  writeStore('gf_requests', list);
-    return saved;
+    const text = await res.text();
+    if (!res.ok) {
+      // include server response text for debugging
+      const errMsg = text || res.statusText || 'API error';
+      const err = new Error(errMsg);
+      // attach status for callers
+      (err as any).status = res.status;
+      throw err;
+    }
+    const json = text ? JSON.parse(text) : {};
+    return { ok: true, fromServer: true, data: json };
+  } catch (e: any) {
+    // fallback to local store but return structured result so caller knows it wasn't sent
+    const listRaw = readStore('gf_requests', [] as any[]);
+    const list = Array.isArray(listRaw) ? listRaw : [];
+    const saved = { id: `REQ-${Date.now()}`, ...body, estado: 'pendiente', fecha: new Date().toISOString() };
+    list.unshift(saved);
+    writeStore('gf_requests', list);
+    const errorDetail = { message: e?.message || String(e), status: e?.status || null };
+    return { ok: false, fromServer: false, data: saved, error: errorDetail };
   }
 }

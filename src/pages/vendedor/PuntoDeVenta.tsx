@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import Button from '../../components/Button';
 import { readStore, writeStore, seedIfEmpty } from '../../utils/localStore';
-import { postVenta, fetchProducts } from '../../utils/api';
+import { postVenta, fetchProducts, fetchInventoryWithStatus } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 
 type Product = { id: string; nombre: string; descripcion?: string; cantidad: number; precio: number; ubicacion?: string; categoria?: string; stock_minimo?: number };
 type CartItem = { productId: string; nombre: string; precio: number; qty: number };
@@ -15,21 +16,28 @@ const PuntoDeVenta: React.FC = () => {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [method, setMethod] = useState<'efectivo'|'tarjeta'|'transferencia'>('efectivo');
 
+  const [apiAvailable, setApiAvailable] = useState(true);
+  const { user } = useAuth();
+
   useEffect(() => {
     seedIfEmpty();
-    // try load from API first
-    fetchProducts().then(res => {
-      // detect if response is from fallback by checking localStorage presence
-      const usingLocal = !window.navigator.onLine || (Array.isArray(res) && res.length === 0 && !!localStorage.getItem('gf_products'));
-      setProducts(res as Product[]);
-      if (usingLocal) setApiAvailable(false);
-    }).catch(() => {
-      setProducts(readStore<Product[]>('gf_products', []));
-      setApiAvailable(false);
-    });
-  }, []);
-
-  const [apiAvailable, setApiAvailable] = useState(true);
+    // try load from API, prefer inventory per sucursal (includes cantidad)
+    if (user && user.sucursal_id) {
+      fetchInventoryWithStatus(Number(user.sucursal_id)).then(res => {
+        // fetchInventoryWithStatus returns { ok, data }
+        setProducts(res.data as Product[]);
+        if (!res.ok) setApiAvailable(false);
+      }).catch(() => {
+        setProducts(readStore<Product[]>('gf_products', []));
+        setApiAvailable(false);
+      });
+    } else {
+      // no user session — try products endpoint or local
+      fetchProducts().then(res => {
+        setProducts(res as Product[]);
+      }).catch(() => setProducts(readStore<Product[]>('gf_products', [])));
+    }
+  }, [user]);
 
   useEffect(() => {
     writeStore('gf_products', products);
@@ -42,7 +50,8 @@ const PuntoDeVenta: React.FC = () => {
   }, [products, query]);
 
   function addToCart(p: Product) {
-    if (p.cantidad <= 0) return alert('Sin stock');
+    const stock = Number(p.cantidad ?? 0);
+    if (Number.isNaN(stock) || stock <= 0) return alert('Sin stock');
     setCart(prev => {
       const exists = prev.find(it => it.productId === p.id);
       if (exists) return prev.map(it => it.productId === p.id ? { ...it, qty: it.qty + 1 } : it);
@@ -65,26 +74,46 @@ const PuntoDeVenta: React.FC = () => {
 
   function finalizeSale() {
     if (cart.length === 0) return alert('Carrito vacío');
-    // Create folio
+
+    // Minimal payload
     const folio = `V-${Date.now()}`;
-    const sale = { folio, fecha: new Date().toISOString(), items: cart, subtotal, iva, total, metodo_pago: method };
-    // try server, fallback handled in helper
-    postVenta({ folio, items: cart, subtotal, iva, total, metodo_pago: method })
+    const items = cart.map(it => ({ producto_id: Number(it.productId), cantidad: Number(it.qty), precio_unitario: Number(it.precio) }));
+    const payload = { folio, vendedor_id: Number(user?.id ?? 0), sucursal_id: Number(user?.sucursal_id ?? 0), items, subtotal, iva, total, metodo_pago: method };
+
+    // basic client-side checks
+    if (!payload.vendedor_id || !payload.sucursal_id) {
+      // fallback local
+      const sale = { folio, fecha: new Date().toISOString(), items: cart, subtotal, iva, total, metodo_pago: method };
+      const all = readStore<any[]>('gf_sales', []);
+      all.unshift(sale);
+      writeStore('gf_sales', all);
+      setProducts(products.map(p => {
+        const it = cart.find(c => c.productId === p.id);
+        if (!it) return p;
+        return { ...p, cantidad: Math.max(0, p.cantidad - it.qty) };
+      }));
+      setCart([]);
+      return alert('Usuario no autenticado: venta registrada localmente');
+    }
+
+  console.log('POST /api/vendedor/ventas payload:', payload);
+  postVenta(payload, payload.vendedor_id, payload.sucursal_id)
       .then(() => {
-        // ensure local copy updated
+        // on success update local stock
+        const sale = { folio, fecha: new Date().toISOString(), items: cart, subtotal, iva, total, metodo_pago: method };
         const all = readStore<any[]>('gf_sales', []);
         all.unshift(sale);
         writeStore('gf_sales', all);
-        const newProducts = products.map(p => {
+        setProducts(products.map(p => {
           const it = cart.find(c => c.productId === p.id);
           if (!it) return p;
           return { ...p, cantidad: Math.max(0, p.cantidad - it.qty) };
-        });
-        setProducts(newProducts);
+        }));
         setCart([]);
-        alert(`Venta registrada. Folio: ${folio}`);
+        alert('Venta registrada.');
       })
-      .catch(() => {
+      .catch((err: any) => {
+        console.error('postVenta error', err);
         alert('Error registrando venta en el servidor, guardada localmente');
       });
   }
@@ -163,8 +192,6 @@ const PuntoDeVenta: React.FC = () => {
                 <label className="block text-sm">Método de pago</label>
                 <select value={method} onChange={e => setMethod(e.target.value as any)} className="w-full border rounded px-2 py-1">
                   <option value="efectivo">Efectivo</option>
-                  <option value="tarjeta">Tarjeta</option>
-                  <option value="transferencia">Transferencia</option>
                 </select>
               </div>
 

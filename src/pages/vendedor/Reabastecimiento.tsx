@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import Button from '../../components/Button';
 import { readStore, writeStore, seedIfEmpty } from '../../utils/localStore';
+import { useAuth } from '../../context/AuthContext';
 import { postSolicitud } from '../../utils/api';
 
 type Product = { id: string; nombre: string; cantidad: number; stock_minimo?: number };
@@ -24,22 +25,83 @@ const Reabastecimiento: React.FC = () => {
 
   const lowStock = useMemo(() => products.filter(p => p.cantidad <= (p.stock_minimo||0)), [products]);
 
+  const { user } = useAuth();
   function createRequest() {
     if (!selectedProduct) return alert('Seleccione un producto');
     if (qty <= 0) return alert('Cantidad inválida');
     const prod = products.find(p => p.id === selectedProduct)!;
     const newReq: Request = { id: `REQ-${Date.now()}`, producto_id: prod.id, producto_nombre: prod.nombre, cantidad: qty, urgencia: urgencia || 'normal', estado: 'pendiente', fecha: new Date().toISOString() };
-    // try server, fallback handled in helper
-    postSolicitud({ sucursal_id: 1, solicitante_id: 2, producto_id: prod.id, cantidad_solicitada: qty })
-      .then(saved => {
-        setRequests(prev => [saved as Request, ...prev]);
-        setSelectedProduct(''); setQty(1); setUrgencia('');
-        alert('Solicitud enviada');
+    // If product id is not numeric (local seeded products use string IDs like 'P-001'),
+    // avoid calling server (which expects numeric product_id FK) and save locally.
+  const productoIdNum = Number(prod.id);
+    if (Number.isNaN(productoIdNum)) {
+      // save locally and inform user
+      console.warn('Producto no sincronizado con el servidor (id no numérico), guardando solicitud localmente:', prod.id);
+      setRequests(prev => [newReq, ...prev]);
+      setSelectedProduct(''); setQty(1); setUrgencia('');
+      return alert('Producto no sincronizado con servidor — solicitud guardada localmente');
+    }
+
+    // try server, helper returns structured result
+  // ensure we have a logged-in user (avoid hard-coded fallback ids)
+  if (!user) {
+    console.warn('Usuario no autenticado: no se puede enviar solicitud al servidor. Guardando localmente.');
+    setRequests(prev => [newReq, ...prev]);
+    setSelectedProduct(''); setQty(1); setUrgencia('');
+    return alert('No hay sesión activa: solicitud guardada localmente');
+  }
+
+  const sucursalToUse = user.sucursal_id;
+  const solicitanteToUse = user.id;
+
+  const payload = { sucursal_id: Number(sucursalToUse), solicitante_id: Number(solicitanteToUse), producto_id: productoIdNum, cantidad_solicitada: Number(qty) };
+
+  // client-side validation to avoid sending malformed requests
+  const invalid = Object.values(payload).some(v => v === null || v === undefined || Number.isNaN(Number(v)));
+  if (invalid) {
+    console.warn('Payload inválido, no se enviará al servidor:', payload);
+    setRequests(prev => [newReq, ...prev]);
+    setSelectedProduct(''); setQty(1); setUrgencia('');
+    return alert('Datos incompletos en la sesión o formulario. Solicitud guardada localmente.');
+  }
+
+  console.debug('Enviando solicitud al servidor, payload:', payload);
+
+  postSolicitud(payload)
+      .then((res) => {
+        if (res.fromServer) {
+          // server returned inserted row — adapt to local Request shape if needed
+          const srv = res.data as any;
+          const mapped: Request = { id: String(srv.id || srv.ID || `REQ-${Date.now()}`), producto_id: String(srv.producto_id || srv.producto || payload.producto_id), producto_nombre: srv.producto_nombre || srv.producto || '', cantidad: srv.cantidad_solicitada || srv.cantidad || payload.cantidad_solicitada, urgencia: (srv.urgencia as any) || 'normal', estado: srv.estado || 'pendiente', fecha: srv.fecha_solicitud || srv.fecha || new Date().toISOString() };
+          setRequests(prev => [mapped, ...prev]);
+          setSelectedProduct(''); setQty(1); setUrgencia('');
+          alert('Solicitud enviada con éxito');
+        } else {
+          // saved locally
+          console.warn('Solicitud guardada localmente:', res.error);
+          // show a clearer message if server returned structured error
+          let msg = 'Servidor no disponible: solicitud guardada localmente';
+          try {
+            if (res.error && res.error.message) {
+              // message could be a JSON string from server
+              try {
+                const parsed = JSON.parse(res.error.message);
+                msg = parsed.error || JSON.stringify(parsed) || msg;
+              } catch (_) {
+                msg = res.error.message;
+              }
+            }
+          } catch (e) {}
+          setRequests(prev => [res.data as Request, ...prev]);
+          setSelectedProduct(''); setQty(1); setUrgencia('');
+          alert(msg);
+        }
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error('Error inesperado al crear solicitud', err);
         setRequests(prev => [newReq, ...prev]);
         setSelectedProduct(''); setQty(1); setUrgencia('');
-        alert('Error en servidor; solicitud guardada localmente');
+        alert('Error al crear solicitud. Ver consola.');
       });
   }
 

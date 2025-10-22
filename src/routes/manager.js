@@ -25,6 +25,24 @@ router.get('/usuarios/:id', async (req, res) => {
   }
 });
 
+// Create user (align fields with `usuarios` table)
+router.post('/usuarios', async (req, res) => {
+  try {
+    const { nombre, correo, rol, contrasena, sucursal_id } = req.body;
+    const pool = await poolPromise;
+    const result = await pool.request()
+      .input('nombre', nombre)
+      .input('correo', correo)
+      .input('contrasena', contrasena)
+      .input('sucursal_id', sucursal_id)
+      .input('rol', rol)
+      .query('INSERT INTO usuarios (nombre, correo, contrasena, sucursal_id, rol) OUTPUT INSERTED.* VALUES (@nombre,@correo,@contrasena,@sucursal_id,@rol)');
+    res.status(201).json(result.recordset[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/sucursales', async (req, res) => {
   try {
     const { nombre, direccion, telefono, encargado_id } = req.body;
