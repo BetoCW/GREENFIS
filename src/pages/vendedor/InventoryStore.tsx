@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { seedIfEmpty } from '../../utils/localStore';
-import { fetchInventoryWithStatus } from '../../utils/api';
+import { fetchInventoryVW } from '../../utils/api';
 
 type Product = { id: string; nombre: string; descripcion?: string; cantidad: number; precio: number; ubicacion?: string; categoria?: string; stock_minimo?: number };
 
@@ -12,7 +12,7 @@ const InventoryStore: React.FC = () => {
 
   useEffect(() => {
     seedIfEmpty();
-    fetchInventoryWithStatus().then(res => {
+    fetchInventoryVW().then(res => {
       setProducts(res.data);
       if (!res.ok) setApiAvailable(false);
     }).catch(() => setApiAvailable(false));

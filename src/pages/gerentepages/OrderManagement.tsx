@@ -6,9 +6,11 @@ const BACKEND = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:400
 
 type Solicitud = {
   id: number;
-  sucursal_id: number;
-  solicitante_id: number;
-  producto_id: number;
+  sucursal?: string | number;
+  solicitante?: string | number;
+  producto?: string | number;
+  stock_actual?: number;
+  stock_minimo?: number;
   cantidad_solicitada: number;
   cantidad_aprobada?: number;
   estado: string;
@@ -27,32 +29,39 @@ const OrderManagement: React.FC = () => {
 
   async function fetchAll() {
     try {
-      const [sRes, pRes] = await Promise.all([
-        fetch(`${BACKEND}/api/manager/solicitudes`),
-        fetch(`${BACKEND}/api/manager/productos`)
-      ]);
+      // fetch solicitudes first but don't fail entire flow if it errors; we still want productos + inventario
+      let sData: any[] = [];
+      try {
+        const sRes = await fetch(`${BACKEND}/api/manager/solicitudes`);
+          if (!sRes.ok) throw new Error('Error cargando solicitudes: ' + await sRes.text());
+          sData = await sRes.json();
+      } catch (e) {
+        console.warn('Error fetching solicitudes, continuing with empty list', e);
+      }
 
-      if (!sRes.ok) throw new Error('Error cargando solicitudes: ' + await sRes.text());
+      const pRes = await fetch(`${BACKEND}/api/manager/productos`);
       if (!pRes.ok) throw new Error('Error cargando productos: ' + await pRes.text());
-
-      const sData = await sRes.json();
       const pData = await pRes.json();
+
       setSolicitudes(sData || []);
       setProductos(pData || []);
 
-      // Try to load inventories per sucursal to calculate stock_actual; best-effort
-  const sucursales: number[] = Array.from(new Set((sData || []).map((x:any) => Number(x.sucursal_id))));
+      // If the view already provides stock_actual, no need to call the vendedor inventario endpoint.
+      const needsInventoryFetch = !(sData && sData.length > 0 && ((sData[0] as any).stock_actual !== undefined || (sData[0] as any).Stock_Actual !== undefined));
       const invMap: Record<string, number> = {};
-      await Promise.all(sucursales.map(async (sId: number) => {
-        try {
-          const r = await fetch(`${BACKEND}/api/vendedor/inventario?sucursal_id=${sId}`);
-          if (!r.ok) return;
-          const inv = await r.json();
-          (inv || []).forEach((row: any) => {
-            invMap[`${sId}_${row.producto_id}`] = row.cantidad ?? row.cantidad_sucursal ?? 0;
-          });
-        } catch (e) { /* ignore */ }
-      }));
+      if (needsInventoryFetch) {
+        const sucursales: number[] = Array.from(new Set((sData || []).map((x:any) => Number(x.sucursal_id)).filter(n => !Number.isNaN(n))));
+        await Promise.all(sucursales.map(async (sId: number) => {
+          try {
+            const r = await fetch(`${BACKEND}/api/vendedor/inventario?sucursal_id=${sId}`);
+            if (!r.ok) return;
+            const inv = await r.json();
+            (inv || []).forEach((row: any) => {
+              invMap[`${sId}_${row.producto_id}`] = row.cantidad ?? row.cantidad_sucursal ?? 0;
+            });
+          } catch (e) { /* ignore */ }
+        }));
+      }
       setInventarioMap(invMap);
     } catch (err) {
       console.error('Error fetching data for solicitudes', err);
@@ -70,17 +79,18 @@ const OrderManagement: React.FC = () => {
   }
 
   function urgencyFor(solic: Solicitud) {
-    const key = `${solic.sucursal_id}_${solic.producto_id}`;
-    const stock = inventarioMap[key];
-    const stockMin = productById[solic.producto_id]?.stock_minimo ?? 0;
-    if (stock === undefined) return { label: 'Desconocida', color: 'gray' };
-    if (stock <= 0) return { label: 'Alta', color: 'red' };
-    if (stock <= stockMin) return { label: 'Alta', color: 'red' };
-    if (stock <= Math.ceil(stockMin * 1.5)) return { label: 'Media', color: 'yellow' };
+    const urg = (solic as any).urgencia ?? (solic as any).Urgencia ?? (solic as any).urgency;
+    if (!urg) return { label: 'Desconocida', color: 'gray' };
+    if (String(urg).toUpperCase() === 'ALTA') return { label: 'Alta', color: 'red' };
+    if (String(urg).toUpperCase() === 'MEDIA') return { label: 'Media', color: 'yellow' };
     return { label: 'Baja', color: 'green' };
   }
+  // note: no visual changes here; button actions below will validate the estado before proceeding
 
   async function approve(solic: Solicitud) {
+    // only allow approving when estado is 'pendiente' (case-insensitive)
+    const estado = ((solic as any).estado ?? '').toString().trim().toLowerCase();
+    if (estado !== 'pendiente') { alert('Solo se pueden aprobar solicitudes en estado pendiente'); return; }
     const defaultQty = solic.cantidad_solicitada;
     const value = window.prompt(`Aprobar solicitud ${formatId(solic.id)} - cantidad a enviar:`, String(defaultQty));
     if (value == null) return;
@@ -97,6 +107,9 @@ const OrderManagement: React.FC = () => {
   }
 
   async function rejectSolic(solic: Solicitud) {
+    // only allow rejecting when estado is 'pendiente'
+    const estado = ((solic as any).estado ?? '').toString().trim().toLowerCase();
+    if (estado !== 'pendiente') { alert('Solo se pueden rechazar solicitudes en estado pendiente'); return; }
     const motivo = window.prompt(`Rechazar ${formatId(solic.id)} - motivo:`);
     if (motivo == null) return;
     try {
@@ -110,11 +123,18 @@ const OrderManagement: React.FC = () => {
   }
 
   const filtered = solicitudes.filter(s => {
-    if (tab === 'pendientes' && s.estado !== 'pendiente') return false;
-    if (tab === 'historial' && s.estado === 'pendiente') return false;
-    if (filters.sucursal && String(s.sucursal_id) !== filters.sucursal) return false;
-    if (filters.producto && String(s.producto_id) !== filters.producto) return false;
-    if (filters.estado && s.estado !== filters.estado) return false;
+    const st = ((s as any).estado ?? '').toString();
+    const stLower = st.toLowerCase();
+    // If Estado filter is set, use it (take precedence over the tab)
+    if (filters.estado) {
+      if (stLower !== (filters.estado ?? '').toString().toLowerCase()) return false;
+    } else {
+      // no explicit estado filter -> apply tab filtering
+      if (tab === 'pendientes' && stLower !== 'pendiente') return false;
+      if (tab === 'historial' && stLower === 'pendiente') return false;
+    }
+    if (filters.sucursal && String((s as any).sucursal_id ?? (s as any).sucursal ?? '') !== filters.sucursal) return false;
+    if (filters.producto && String((s as any).producto_id ?? (s as any).producto ?? '') !== filters.producto) return false;
     if (filters.fechaDesde) {
       const desde = new Date(filters.fechaDesde);
       if (new Date(s.fecha_solicitud) < desde) return false;
@@ -126,8 +146,8 @@ const OrderManagement: React.FC = () => {
     return true;
   });
 
-  const sucursalOptions = Array.from(new Set(solicitudes.map(s => String(s.sucursal_id))));
-  const productoOptions = Array.from(new Set(solicitudes.map(s => String(s.producto_id))));
+  const sucursalOptions = Array.from(new Set(solicitudes.map(s => String((s as any).sucursal ?? (s as any).sucursal_id ?? ''))));
+  const productoOptions = Array.from(new Set(solicitudes.map(s => String((s as any).producto ?? (s as any).producto_id ?? ''))));
 
   return (
     <div className="max-w-7xl mx-auto">
@@ -162,8 +182,6 @@ const OrderManagement: React.FC = () => {
                 <option value="">Todos</option>
                 <option value="pendiente">Pendiente</option>
                 <option value="aprobada">Aprobada</option>
-                <option value="rechazada">Rechazada</option>
-                <option value="completada">Completada</option>
               </select>
             </div>
             <div>
@@ -198,16 +216,23 @@ const OrderManagement: React.FC = () => {
               </thead>
               <tbody>
                 {filtered.map(s => {
-                  const prod = productById[s.producto_id];
-                  const stock = inventarioMap[`${s.sucursal_id}_${s.producto_id}`];
-                  const stockMin = prod?.stock_minimo ?? '-';
+                  // prefer view-provided names and stock if available; fall back to productById/inventarioMap when numeric ids exist
+                  const prodId = (s as any).producto_id ?? null;
+                  const sucId = (s as any).sucursal_id ?? null;
+                  const prod = prodId != null ? productById[Number(prodId)] : undefined;
+                  const invKey = (sucId != null && prodId != null) ? `${sucId}_${prodId}` : null;
+                  const stock = (s as any).stock_actual ?? (invKey ? inventarioMap[invKey] : undefined);
+                  const stockMin = (s as any).stock_minimo ?? prod?.stock_minimo ?? '-';
                   const urg = urgencyFor(s);
+                  const productoNombre = (s as any).producto ?? prod?.nombre ?? `#${prodId ?? '?'}`;
+                  const solicitanteNombre = (s as any).solicitante ?? String((s as any).solicitante_id ?? '');
+                  const sucursalNombre = (s as any).sucursal ?? String((s as any).sucursal_id ?? '');
                   return (
                     <tr key={s.id} className="border-t">
                       <td className="px-3 py-2 text-sm">{formatId(s.id)}</td>
-                      <td className="px-3 py-2 text-sm">{s.sucursal_id}</td>
-                      <td className="px-3 py-2 text-sm">{s.solicitante_id}</td>
-                      <td className="px-3 py-2 text-sm">{prod?.nombre ?? `#${s.producto_id}`}</td>
+                      <td className="px-3 py-2 text-sm">{sucursalNombre}</td>
+                      <td className="px-3 py-2 text-sm">{solicitanteNombre}</td>
+                      <td className="px-3 py-2 text-sm">{productoNombre}</td>
                       <td className={`px-3 py-2 text-sm ${urg.color === 'red' ? 'text-red-600' : ''}`}>{stock ?? '-'}</td>
                       <td className="px-3 py-2 text-sm">{stockMin}</td>
                       <td className="px-3 py-2 text-sm">{s.cantidad_solicitada}</td>

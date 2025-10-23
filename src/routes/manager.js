@@ -186,7 +186,74 @@ router.put('/promociones/:id', async (req, res) => { try { const { id } = req.pa
 router.delete('/promociones/:id', async (req, res) => { try { const { id } = req.params; const pool = await poolPromise; await pool.request().input('id', id).query('DELETE FROM promociones WHERE id = @id'); res.json({ ok: true }); } catch (err) { res.status(500).json({ error: err.message }); } });
 
 // ---------- Solicitudes de reabastecimiento y Pedidos proveedores (Aprobaciones) ----------
-router.get('/solicitudes', async (req, res) => { try { const pool = await poolPromise; const result = await pool.request().query('SELECT * FROM solicitudes_reabastecimiento'); res.json(result.recordset); } catch (err) { res.status(500).json({ error: err.message }); } });
+router.get('/solicitudes', async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    // Read from the view created by the DBA: vw_solicitudes_gerente
+    const qView = `
+      SELECT
+        Id AS id,
+        Sucursal AS sucursal,
+        Solicitante AS solicitante,
+        Producto AS producto,
+        Stock_Actual AS stock_actual,
+        Stock_Minimo AS stock_minimo,
+        Cantidad_Solicitada AS cantidad_solicitada,
+        Cantidad_Aprobada AS cantidad_aprobada,
+        Estado AS estado,
+        Motivo_Rechazo AS motivo_rechazo,
+        Fecha AS fecha_solicitud,
+        Fecha_Aprobacion AS fecha_aprobacion,
+        Aprobado_Por AS aprobado_por,
+        Dias_Pendiente AS dias_pendiente,
+        Urgencia AS urgencia
+      FROM vw_solicitudes_gerente
+      ORDER BY Fecha DESC
+    `;
+    try {
+      const result = await pool.request().query(qView);
+      return res.json(result.recordset);
+    } catch (viewErr) {
+      console.warn('vw_solicitudes_gerente query failed, attempting fallback JOIN query', viewErr && viewErr.message);
+      // fallback: original JOIN query in case the view is temporarily unavailable or has permissions issues
+      const qFallback = `
+      SELECT
+        s.id AS id,
+        suc.nombre AS sucursal,
+        usr.nombre AS solicitante,
+        p.nombre AS producto,
+        it.cantidad AS stock_actual,
+        p.stock_minimo AS stock_minimo,
+        s.cantidad_solicitada AS cantidad_solicitada,
+        s.cantidad_aprobada AS cantidad_aprobada,
+        s.estado AS estado,
+        s.motivo_rechazo AS motivo_rechazo,
+        s.fecha_solicitud AS fecha_solicitud,
+        s.fecha_aprobacion AS fecha_aprobacion,
+        apr.nombre AS aprobado_por,
+        DATEDIFF(DAY, s.fecha_solicitud, GETDATE()) AS dias_pendiente,
+        CASE WHEN it.cantidad <= p.stock_minimo THEN 'ALTA' WHEN it.cantidad <= (p.stock_minimo * 2) THEN 'MEDIA' ELSE 'BAJA' END AS urgencia
+      FROM solicitudes_reabastecimiento s
+      LEFT JOIN productos p ON p.id = s.producto_id
+      LEFT JOIN usuarios usr ON usr.id_usuario = s.solicitante_id
+      LEFT JOIN sucursales suc ON suc.id_sucursal = s.sucursal_id
+      LEFT JOIN usuarios apr ON apr.id_usuario = s.aprobado_por
+      LEFT JOIN inventario_tienda it ON p.id = it.producto_id AND s.sucursal_id = it.sucursal_id
+      ORDER BY s.fecha_solicitud DESC
+      `;
+      try {
+        const fallbackRes = await pool.request().query(qFallback);
+        return res.json(fallbackRes.recordset);
+      } catch (fbErr) {
+        console.error('Fallback JOIN query also failed for /manager/solicitudes', fbErr);
+        return res.status(500).json({ error: fbErr.message });
+      }
+    }
+  } catch (err) {
+    console.error('GET /manager/solicitudes error', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 router.post('/solicitudes', async (req, res) => { try { const { sucursal_id, solicitante_id, producto_id, cantidad_solicitada } = req.body; const pool = await poolPromise; const result = await pool.request().input('sucursal_id', sucursal_id).input('solicitante_id', solicitante_id).input('producto_id', producto_id).input('cantidad_solicitada', cantidad_solicitada).query('INSERT INTO solicitudes_reabastecimiento (sucursal_id, solicitante_id, producto_id, cantidad_solicitada) OUTPUT INSERTED.* VALUES (@sucursal_id,@solicitante_id,@producto_id,@cantidad_solicitada)'); res.status(201).json(result.recordset[0]); } catch (err) { res.status(500).json({ error: err.message }); } });
 

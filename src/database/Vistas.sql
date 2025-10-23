@@ -22,3 +22,17 @@ GO
 
 
 select *from vw_productos_stock
+
+CREATE VIEW vw_inventario_tienda AS
+SELECT 
+    p.id AS ID,
+    p.nombre AS Nombre,
+    COALESCE(s.nombre, 'Sin ubicación') AS Ubicación,
+    it.cantidad AS Stock,
+    p.precio AS Precio
+FROM productos p
+INNER JOIN inventario_tienda it ON p.id = it.producto_id
+LEFT JOIN sucursales s ON it.sucursal_id = s.id_sucursal
+WHERE p.activo = 1;
+
+select *from vw_inventario_tienda

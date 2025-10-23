@@ -1,7 +1,8 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Users, Package, FileText, BarChart3, Gift } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useAuth } from '../../context/AuthContext';
 
 const Dashboard: React.FC = () => {
   const cards = [
@@ -49,9 +50,10 @@ const Dashboard: React.FC = () => {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
       >
-        <h1 className="text-3xl font-bold text-text-dark mb-2">
-          Bienvenido Gerente a GreenFis
-        </h1>
+        <div className="flex justify-between items-center mb-2">
+          <h1 className="text-3xl font-bold text-text-dark">Bienvenido Gerente a GreenFis</h1>
+          <LogoutButton />
+        </div>
         <p className="text-lg text-gray-600 mb-8">¿Qué desea hacer?</p>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -84,3 +86,17 @@ const Dashboard: React.FC = () => {
 };
 
 export default Dashboard;
+
+function LogoutButton() {
+  const { logout } = useAuth();
+  const navigate = useNavigate();
+  function onLogout() {
+    logout();
+    navigate('/login');
+  }
+  return (
+    <button onClick={onLogout} className="px-3 py-2 bg-red-500 text-white rounded hover:opacity-90">
+      Cerrar sesión
+    </button>
+  );
+}

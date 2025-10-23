@@ -29,6 +29,28 @@ export async function fetchInventoryWithStatus(sucursal_id: number = DEFAULT_SUC
   }
 }
 
+// New helper: fetch inventory from the vw_inventario_tienda endpoint (returns inventory across all sucursales)
+export async function fetchInventoryVW() {
+  try {
+    const res = await fetch(`${BASE}/api/vendedor/inventario/vw`);
+    if (!res.ok) throw new Error('API error');
+    const data = await res.json();
+    const mapped = data.map((r: any) => ({
+      id: String(r.id),
+      nombre: r.nombre,
+      descripcion: r.descripcion || '',
+      cantidad: Number(r.cantidad ?? 0),
+      precio: parseFloat(r.precio || 0),
+      ubicacion: r.ubicacion || '',
+      categoria: r.categoria || '',
+      stock_minimo: r.stock_minimo || 0
+    }));
+    return { ok: true, data: mapped };
+  } catch (e) {
+    return { ok: false, data: readStore('gf_products', []) };
+  }
+}
+
 export async function fetchProducts() {
   try {
     const res = await fetch(`${BASE}/api/vendedor/productos`);

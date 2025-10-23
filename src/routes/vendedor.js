@@ -26,6 +26,28 @@ router.get('/inventario', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Inventario (vista) — devuelve inventario de todas las sucursales usando vw_inventario_tienda
+// Este endpoint es específico para la página InventoryStore y no filtra por sucursal
+router.get('/inventario/vw', async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    // Mapear columnas de la vista a campos en minúsculas que espera el frontend
+    const q = `
+      SELECT 
+        ID AS id,
+        Nombre AS nombre,
+        COALESCE([Ubicación], 'Sin ubicación') AS ubicacion,
+        Stock AS cantidad,
+        Precio AS precio
+      FROM vw_inventario_tienda
+    `;
+    const result = await pool.request().query(q);
+    res.json(result.recordset);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Crear solicitud de reabastecimiento desde vendedor
 router.post('/solicitudes', async (req, res) => {
   try {

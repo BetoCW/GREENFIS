@@ -1,12 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { readStore, seedIfEmpty } from '../../utils/localStore';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
 
 const DashboardVendedor: React.FC = () => {
   const [sales, setSales] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [promos, setPromos] = useState<any[]>([]);
+  const { logout } = useAuth();
+  const navigate = useNavigate();
 
   useEffect(() => {
     seedIfEmpty();
@@ -26,7 +29,10 @@ const DashboardVendedor: React.FC = () => {
   return (
     <div className="max-w-7xl mx-auto">
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-        <h1 className="text-3xl font-bold text-text-dark mb-6">Dashboard</h1>
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-3xl font-bold text-text-dark">Dashboard</h1>
+          <button onClick={() => { logout(); navigate('/login'); }} className="px-3 py-2 bg-red-500 text-white rounded hover:opacity-90">Cerrar sesión</button>
+        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="bg-white rounded-lg shadow-soft p-4 border border-gray-medium"> 
@@ -79,3 +85,4 @@ const DashboardVendedor: React.FC = () => {
 };
 
 export default DashboardVendedor;
+
