@@ -12,8 +12,18 @@ const Login: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await login(email, password);
-      navigate('/');
+      const user = await login(email, password);
+      // If backend returned an unknown role, show an error instead of redirecting
+      if (!user || user.role === 'unknown') {
+        setError('Credenciales incorrectas o rol no reconocido. Verifique usuario/contraseña.');
+        return;
+      }
+
+      // Redirect based on role
+      if (user.role === 'gerente') navigate('/dashboard');
+      else if (user.role === 'vendedor') navigate('/vendedor/dashboard');
+      else if (user.role === 'almacenista') navigate('/almacenista/dashboard');
+      else navigate('/');
     } catch (err) {
       setError('No se pudo iniciar sesión');
     }

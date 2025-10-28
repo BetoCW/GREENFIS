@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useLocation, Outlet } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Menu, X, Users, Package, FileText, BarChart3, Settings, Gift, ShoppingCart, DollarSign } from 'lucide-react';
+import { Menu, X, Users, Package, FileText, BarChart3, Settings, Gift, ShoppingCart, DollarSign, Truck, Repeat, Box } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const Layout: React.FC = () => {
@@ -31,7 +31,19 @@ const Layout: React.FC = () => {
     { icon: Gift, label: 'Promociones', path: '/vendedor/promociones' },
   ];
 
-  const menuItems = user && user.role === 'vendedor' ? vendedorMenu : gerenteMenu;
+  // Menu for almacenista
+  const almacenistaMenu = [
+    { icon: BarChart3, label: 'Dashboard', path: '/almacenista/dashboard' },
+    { icon: Package, label: 'Inventario Almacén', path: '/almacenista/inventario' },
+    { icon: Repeat, label: 'Crear Transferencia', path: '/almacenista/transferencias' },
+    { icon: Truck, label: 'Recepción de Pedidos', path: '/almacenista/recepcion' },
+    { icon: Box, label: 'Productos', path: '/almacenista/productos' },
+    { icon: FileText, label: 'Solicitudes', path: '/almacenista/solicitudes' },
+  ];
+
+  let menuItems = gerenteMenu;
+  if (user && user.role === 'vendedor') menuItems = vendedorMenu;
+  if (user && user.role === 'almacenista') menuItems = almacenistaMenu;
 
   return (
     <div className="min-h-screen bg-gray-50">

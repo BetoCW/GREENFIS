@@ -43,7 +43,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [user]);
 
   const login = async (email: string, _password: string) => {
-    // Simulate simple auth: accept any password, infer role by email
+    // Prefer validating against backend users table (SQL Server) when available.
+    // This will fetch users and match email+password (simple dev auth, no hashing).
+    const BACKEND = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:4000';
+    try {
+      const res = await fetch(`${BACKEND}/api/manager/usuarios`);
+      if (res.ok) {
+        const list = await res.json();
+        if (Array.isArray(list)) {
+    const found = list.find((u: any) => String(u.correo).trim().toLowerCase() === String(email).trim().toLowerCase() && String(u.contrasena) === String(_password));
+          if (found) {
+            const role = (found.rol as Role) || detectRole(email);
+            const id = found.id_usuario ?? found.id ?? 0;
+            const sucursal_id = found.sucursal_id ?? undefined;
+            const newUser: User = { id, name: (found.nombre || email.split('@')[0]), email, role, sucursal_id };
+            setUser(newUser);
+            return newUser;
+          }
+        }
+      }
+    } catch (err) {
+      // If backend not available, fall back to email-based role detection below
+      console.warn('Auth: could not reach backend users endpoint, falling back to heuristic role detection', err);
+    }
+
+    // Fallback behavior: infer role from email (existing heuristic) and accept any password.
     const role = detectRole(email);
     // set default ids that match the seeded DB in GreenFis.sql (for dev convenience)
     let id = 99;

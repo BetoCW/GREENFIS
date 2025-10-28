@@ -16,15 +16,56 @@ const UserRegistration: React.FC = () => {
     contrasena: ''
   });
 
+  // editingId: null => creating new user; number => editing that user id
+  const [editingId, setEditingId] = useState<number | null>(null);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Basic client-side validation
+    // If editingId is set, perform PUT to update only nombre, correo and contrasena
+    if (editingId) {
+      // Minimal validation per requirement: nombre, correo, contrasena required
+      if (!formData.nombre || !formData.correo || !formData.contrasena) {
+        alert('Por favor complete los campos requeridos (nombre, correo y contraseña)');
+        return;
+      }
+
+      fetch(`${API_BASE}/usuarios/${editingId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nombre: formData.nombre, correo: formData.correo, contrasena: formData.contrasena })
+      })
+        .then(async (res) => {
+          const text = await res.text();
+          if (!res.ok) throw new Error(text || res.statusText);
+          try { return JSON.parse(text); } catch { return text; }
+        })
+        .then((updated) => {
+          // Update local list: replace the edited user (match by id_usuario or id)
+          setUsers((list) => list.map((it) => {
+            const idVal = it.id_usuario ?? it.id;
+            if (String(idVal) === String(editingId)) {
+              return (updated && typeof updated === 'object') ? updated : { ...it, nombre: formData.nombre, correo: formData.correo };
+            }
+            return it;
+          }));
+          setEditingId(null);
+          setFormData({ nombre: '', correo: '', rol: '', sucursal_id: '', contrasena: '' });
+        })
+        .catch((err) => {
+          console.error('Error updating user', err);
+          alert('Error al actualizar usuario. Ver consola para detalles.');
+        });
+
+      return; // stop here, do not run create POST
+    }
+
+    // Basic client-side validation for creation
     if (!formData.nombre || !formData.correo || !formData.rol || !formData.contrasena) {
       alert('Por favor complete los campos requeridos');
       return;
     }
 
-    // Post to server
+    // Post to server (creation) - original code preserved
     fetch(`${API_BASE}/usuarios`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -71,6 +112,18 @@ const UserRegistration: React.FC = () => {
       .then((data) => setUsers(data || []))
       .catch((err) => { console.error('Error fetching usuarios', err); setUsers([]); });
   }, []);
+
+  const startEdit = (u: any) => {
+    const id = u.id_usuario ?? u.id;
+    setEditingId(Number(id));
+    setFormData({ nombre: u.nombre || '', correo: u.correo || '', rol: u.rol || '', sucursal_id: u.sucursal_id ? String(u.sucursal_id) : '', contrasena: '' });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setFormData({ nombre: '', correo: '', rol: '', sucursal_id: '', contrasena: '' });
+  };
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -135,9 +188,16 @@ const UserRegistration: React.FC = () => {
             />
 
             <div className="pt-4">
-              <Button type="submit" className="w-full" size="lg">
-                REGISTRAR USUARIO
-              </Button>
+              <div className="flex items-center space-x-2">
+                <Button type="submit" className="flex-1" size="lg">
+                  {editingId ? 'ACTUALIZAR USUARIO' : 'REGISTRAR USUARIO'}
+                </Button>
+                {editingId && (
+                  <Button type="button" onClick={cancelEdit} className="px-4 py-2 bg-gray-200 text-black rounded" size="lg">
+                    CANCELAR
+                  </Button>
+                )}
+              </div>
             </div>
           </form>
         </div>
@@ -154,6 +214,7 @@ const UserRegistration: React.FC = () => {
                     <th className="px-3 py-2">Correo</th>
                     <th className="px-3 py-2">Rol</th>
                     <th className="px-3 py-2">Teléfono</th>
+                    <th className="px-3 py-2">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -164,6 +225,11 @@ const UserRegistration: React.FC = () => {
                       <td className="px-3 py-2 text-sm">{u.correo}</td>
                       <td className="px-3 py-2 text-sm">{u.rol}</td>
                       <td className="px-3 py-2 text-sm">{u.sucursal_id ?? '-'}</td>
+                      <td className="px-3 py-2 text-sm">
+                        <div className="flex space-x-2">
+                          <Button type="button" onClick={() => startEdit(u)} className="px-3 py-1" size="sm">EDITAR</Button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                   {users.length === 0 && (

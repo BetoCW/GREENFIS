@@ -16,6 +16,13 @@ import Reabastecimiento from './pages/vendedor/Reabastecimiento';
 import SalesHistory from './pages/vendedor/SalesHistory';
 import CorteCaja from './pages/vendedor/CorteCaja';
 import PromotionsVendedor from './pages/vendedor/PromotionsVendedor';
+// Almacenista pages
+import DashboardAlmacenista from './pages/Almacenista/DashboardAlmacenista';
+import InventarioAlmacen from './pages/Almacenista/InventarioAlmacen';
+import TransferenciasAlmacen from './pages/Almacenista/TransferenciasAlmacen';
+import RecepcionPedidos from './pages/Almacenista/RecepcionPedidos';
+import ProductosAlmacen from './pages/Almacenista/ProductosAlmacen';
+import SolicitudesAlmacen from './pages/Almacenista/SolicitudesAlmacen';
 import Login from './pages/Login';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -49,6 +56,14 @@ function App(): React.ReactElement {
                 <Route path="vendedor/historial-ventas" element={<ProtectedRoute roles={["vendedor"]}><SalesHistory /></ProtectedRoute>} />
                 <Route path="vendedor/corte-caja" element={<ProtectedRoute roles={["vendedor"]}><CorteCaja /></ProtectedRoute>} />
                 <Route path="vendedor/promociones" element={<ProtectedRoute roles={["vendedor"]}><PromotionsVendedor /></ProtectedRoute>} />
+
+                {/* Almacenista-specific routes */}
+                <Route path="almacenista/dashboard" element={<ProtectedRoute roles={["almacenista"]}><DashboardAlmacenista /></ProtectedRoute>} />
+                <Route path="almacenista/inventario" element={<ProtectedRoute roles={["almacenista"]}><InventarioAlmacen /></ProtectedRoute>} />
+                <Route path="almacenista/transferencias" element={<ProtectedRoute roles={["almacenista"]}><TransferenciasAlmacen /></ProtectedRoute>} />
+                <Route path="almacenista/recepcion" element={<ProtectedRoute roles={["almacenista"]}><RecepcionPedidos /></ProtectedRoute>} />
+                <Route path="almacenista/productos" element={<ProtectedRoute roles={["almacenista"]}><ProductosAlmacen /></ProtectedRoute>} />
+                <Route path="almacenista/solicitudes" element={<ProtectedRoute roles={["almacenista"]}><SolicitudesAlmacen /></ProtectedRoute>} />
               </Route>
             <Route path="*" element={<Navigate to="/login" replace />} />
           </Routes>
@@ -62,9 +77,9 @@ function HomeRedirect(): React.ReactElement {
   if (!user) return <Navigate to="/login" replace />;
   // Send user to their role-specific landing
   if (user.role === 'gerente') return <Navigate to="/dashboard" replace />;
-  if (user.role === 'almacenista') return <Navigate to="/gestionar-inventario" replace />;
+  if (user.role === 'almacenista') return <Navigate to="/almacenista/dashboard" replace />;
   if (user.role === 'vendedor') return <Navigate to="/vendedor/dashboard" replace />;
-  return <Navigate to="/dashboard" replace />;
+  return <Navigate to="/login" replace />;
 }
 /*
 function HomeRedirect(): React.ReactElement {

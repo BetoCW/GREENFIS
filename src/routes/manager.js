@@ -43,6 +43,32 @@ router.post('/usuarios', async (req, res) => {
   }
 });
 
+// Update user: actualiza solo nombre, correo y contrasena (id en params)
+router.put('/usuarios/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { nombre, correo, contrasena } = req.body;
+
+    // Validación mínima según requerimiento
+    if (!nombre || !correo || !contrasena) {
+      return res.status(400).json({ error: 'nombre, correo y contrasena son requeridos' });
+    }
+
+    const pool = await poolPromise;
+    await pool.request()
+      .input('id', id)
+      .input('nombre', nombre)
+      .input('correo', correo)
+      .input('contrasena', contrasena)
+      .query('UPDATE usuarios SET nombre=@nombre, correo=@correo, contrasena=@contrasena WHERE id_usuario=@id');
+
+    const result = await pool.request().input('id', id).query('SELECT * FROM usuarios WHERE id_usuario = @id');
+    res.json(result.recordset[0] || null);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/sucursales', async (req, res) => {
   try {
     const { nombre, direccion, telefono, encargado_id } = req.body;
