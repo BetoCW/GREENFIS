@@ -14,6 +14,18 @@ router.get('/inventario', async (req, res) => {
   }
 });
 
+// Expose the view vw_gestion_inventario for frontend inventory management UI
+router.get('/inventario/vw', async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    const result = await pool.request().query('SELECT * FROM vw_gestion_inventario');
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('GET /almacen/inventario/vw error', err && err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Adjust stock in central warehouse
 router.put('/inventario/:id', async (req, res) => {
   try {
