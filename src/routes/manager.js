@@ -306,6 +306,17 @@ router.put('/pedidos/:id', async (req, res) => { try { const { id } = req.params
 // ---------- Reportes ----------
 router.post('/reportes', async (req, res) => { try { const { tipo, nombre, sucursal_id, periodo_inicio, periodo_fin, generado_por, parametros } = req.body; const pool = await poolPromise; const result = await pool.request().input('tipo', tipo).input('nombre', nombre).input('sucursal_id', sucursal_id).input('periodo_inicio', periodo_inicio).input('periodo_fin', periodo_fin).input('generado_por', generado_por).input('parametros', parametros).query('INSERT INTO reportes (tipo,nombre,sucursal_id,periodo_inicio,periodo_fin,generado_por,parametros) OUTPUT INSERTED.* VALUES (@tipo,@nombre,@sucursal_id,@periodo_inicio,@periodo_fin,@generado_por,@parametros)'); res.status(201).json(result.recordset[0]); } catch (err) { res.status(500).json({ error: err.message }); } });
 
+// Expose the view vw_reportes_ventas so frontend can fetch enriched sales reports
+router.get('/reportes/vw', async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    const result = await pool.request().query('SELECT * FROM vw_reportes_ventas');
+    res.json(result.recordset);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/reportes', async (req, res) => { try { const pool = await poolPromise; const result = await pool.request().query('SELECT * FROM reportes'); res.json(result.recordset); } catch (err) { res.status(500).json({ error: err.message }); } });
 
 // ---------- Cortes de caja ----------
@@ -325,6 +336,18 @@ router.get('/almacen/inventario', async (req, res) => {
     const result = await pool.request().query('SELECT ia.*, p.nombre AS producto FROM inventario_almacen ia LEFT JOIN productos p ON ia.producto_id = p.id');
     res.json(result.recordset);
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Expose the view vw_gestion_inventario for frontend inventory management UI
+router.get('/almacen/inventario/vw', async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    const result = await pool.request().query('SELECT * FROM vw_gestion_inventario');
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('GET /manager/almacen/inventario/vw error', err && err.message);
     res.status(500).json({ error: err.message });
   }
 });

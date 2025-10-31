@@ -17,18 +17,48 @@ interface Product {
 
 const InventoryManagement: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const ubicaciones = ['Almacén A', 'Almacén B', 'Sucursal Centro', 'Sucursal Norte'];
-    const mockProducts: Product[] = Array.from({ length: 15 }, (_, i) => ({
-      id: `PRD-${(i + 1).toString().padStart(3, '0')}`,
-      nombre: faker.commerce.productName(),
-      descripcion: faker.commerce.productDescription(),
-      cantidad: faker.number.int({ min: 0, max: 100 }),
-      precio: parseFloat(faker.commerce.price({ min: 10, max: 500 })),
-      ubicacion: faker.helpers.arrayElement(ubicaciones)
-    }));
-    setProducts(mockProducts);
+    // Fetch data from the DB view vw_gestion_inventario
+    async function load() {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const res = await fetch('http://localhost:4000/api/almacen/inventario/vw');
+        if (!res.ok) throw new Error(`Server ${res.status}`);
+        const data = await res.json();
+        // map view columns to Product shape
+        const mapped: Product[] = (Array.isArray(data) ? data : []).map((r: any, i: number) => ({
+          id: String(r.ID ?? r.id ?? `PRD-${(i + 1).toString().padStart(3, '0')}`),
+          nombre: r.NOMBRE ?? r.nombre ?? r.producto ?? `Producto ${i + 1}`,
+          descripcion: r.DESCRIPCION ?? r.descripcion ?? '',
+          cantidad: Number(r.CANTIDAD ?? r.cantidad ?? 0),
+          precio: Number(String(r.PRECIO ?? r.precio ?? '').replace(/[^0-9.-]+/g, '')) || 0,
+          ubicacion: r.UBICACION ?? r.ubicacion ?? 'Sin ubicación'
+        }));
+        setProducts(mapped);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.warn('Failed to load vw_gestion_inventario:', msg);
+        setError(msg);
+        // fallback to local mock data to keep UI usable
+        const ubicaciones = ['Almacén A', 'Almacén B', 'Sucursal Centro', 'Sucursal Norte'];
+        const mockProducts: Product[] = Array.from({ length: 15 }, (_, i) => ({
+          id: `PRD-${(i + 1).toString().padStart(3, '0')}`,
+          nombre: faker.commerce.productName(),
+          descripcion: faker.commerce.productDescription(),
+          cantidad: faker.number.int({ min: 0, max: 100 }),
+          precio: parseFloat(faker.commerce.price({ min: 10, max: 500 })),
+          ubicacion: faker.helpers.arrayElement(ubicaciones)
+        }));
+        setProducts(mockProducts);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    load();
   }, []);
 
   const handleDeleteProduct = (id: string) => {
@@ -70,7 +100,7 @@ const InventoryManagement: React.FC = () => {
     {
       key: 'actions',
       header: 'Acciones',
-      render: (_, row: Product) => (
+      render: (_value: any, row: Product) => (
         <div className="flex space-x-2">
           <button
             onClick={() => alert(`Editando producto ${row.id}`)}
@@ -88,6 +118,7 @@ const InventoryManagement: React.FC = () => {
       )
     }
   ];
+
 
   return (
     <div className="max-w-7xl mx-auto">
@@ -116,7 +147,17 @@ const InventoryManagement: React.FC = () => {
             </p>
           </div>
 
-          <Table columns={columns} data={products} />
+          {error && (
+            <div className="mb-4 p-3 rounded border border-yellow-300 bg-yellow-50 text-sm text-yellow-800">
+              <strong>Advertencia:</strong> No se pudieron obtener los datos reales: {error}. Mostrando datos de prueba.
+            </div>
+          )}
+
+          {isLoading ? (
+            <div className="py-8 text-center text-gray-600">Cargando inventario...</div>
+          ) : (
+            <Table columns={columns} data={products} />
+          )}
 
           <div className="mt-6 pt-4 border-t border-gray-medium">
             <div className="flex flex-wrap gap-4 text-sm">
