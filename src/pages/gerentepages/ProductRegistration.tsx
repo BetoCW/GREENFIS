@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import Button from '../../components/Button';
 import FormField from '../../components/FormField';
+import { fetchSucursales, createProduct } from '../../utils/api';
 
 const ProductRegistration: React.FC = () => {
   const navigate = useNavigate();
@@ -12,14 +13,40 @@ const ProductRegistration: React.FC = () => {
     descripcion: '',
     cantidad: '',
     precio: '',
-    ubicacion: ''
+    ubicacion: '' // will store sucursal id as string
   });
+  const [sucursales, setSucursales] = useState<Array<{ id: number; nombre: string }>>([]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  useEffect(() => {
+    const load = async () => {
+      const res = await fetchSucursales();
+      if (res.ok) setSucursales(res.data || []);
+      else setSucursales([]);
+    };
+    load();
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Producto registrado:', formData);
-    alert('Producto registrado exitosamente');
-    navigate('/gestionar-inventario');
+    // Prepare payload aligning with manager.post('/productos') expected fields
+    const payload = {
+      codigo_barras: '',
+      nombre: formData.nombre,
+      descripcion: formData.descripcion,
+      precio: parseFloat(formData.precio || '0') || 0,
+      categoria_id: null,
+      proveedor_id: null,
+      stock_minimo: parseInt(formData.cantidad || '0') || 0,
+      creado_por: 1
+    };
+
+    const res = await createProduct(payload);
+    if (res.ok) {
+      alert('Producto registrado exitosamente');
+      navigate('/gestionar-inventario');
+    } else {
+      alert('Error al registrar producto: ' + (res.error || 'error desconocido'));
+    }
   };
 
   return (
@@ -104,11 +131,13 @@ const ProductRegistration: React.FC = () => {
                 className="w-full px-3 py-2 border border-gray-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-green-primary focus:border-transparent transition-colors"
               >
                 <option value="">Seleccione una ubicación</option>
-                <option value="Almacén A">Almacén A</option>
-                <option value="Almacén B">Almacén B</option>
-                <option value="Sucursal Centro">Sucursal Centro</option>
-                <option value="Sucursal Norte">Sucursal Norte</option>
-                <option value="Sucursal Sur">Sucursal Sur</option>
+                {sucursales.length === 0 ? (
+                  <option value="">No hay sucursales registradas</option>
+                ) : (
+                  sucursales.map(s => (
+                    <option key={s.id} value={String(s.id)}>{s.nombre}</option>
+                  ))
+                )}
               </select>
             </div>
 

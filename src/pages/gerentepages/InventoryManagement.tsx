@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { faker } from '@faker-js/faker';
 import Button from '../../components/Button';
 import Table from '../../components/Table';
+import { updateProduct, deleteProduct } from '../../utils/api';
 
 interface Product {
   id: string;
@@ -19,6 +20,8 @@ const InventoryManagement: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<boolean>(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
 
   useEffect(() => {
     // Fetch data from the DB view vw_gestion_inventario
@@ -30,14 +33,22 @@ const InventoryManagement: React.FC = () => {
         if (!res.ok) throw new Error(`Server ${res.status}`);
         const data = await res.json();
         // map view columns to Product shape
-        const mapped: Product[] = (Array.isArray(data) ? data : []).map((r: any, i: number) => ({
-          id: String(r.ID ?? r.id ?? `PRD-${(i + 1).toString().padStart(3, '0')}`),
-          nombre: r.NOMBRE ?? r.nombre ?? r.producto ?? `Producto ${i + 1}`,
-          descripcion: r.DESCRIPCION ?? r.descripcion ?? '',
-          cantidad: Number(r.CANTIDAD ?? r.cantidad ?? 0),
-          precio: Number(String(r.PRECIO ?? r.precio ?? '').replace(/[^0-9.-]+/g, '')) || 0,
-          ubicacion: r.UBICACION ?? r.ubicacion ?? 'Sin ubicación'
-        }));
+        const mapped: Product[] = (Array.isArray(data) ? data : []).map((r: any, i: number) => {
+          // Prefer real numeric product id fields coming from the view/backend
+          const rawId = r.producto_id ?? r.productoId ?? r.id ?? r.ID;
+          const numericId = rawId != null && !Number.isNaN(Number(rawId)) ? String(Number(rawId)) : null;
+          const defaultId = `PRD-${(i + 1).toString().padStart(3, '0')}`;
+          const idStr = numericId ?? String(r.ID ?? r.id ?? defaultId);
+
+          return {
+            id: idStr,
+            nombre: r.NOMBRE ?? r.nombre ?? r.producto ?? `Producto ${i + 1}`,
+            descripcion: r.DESCRIPCION ?? r.descripcion ?? '',
+            cantidad: Number(r.CANTIDAD ?? r.cantidad ?? 0),
+            precio: Number(String(r.PRECIO ?? r.precio ?? '').replace(/[^0-9.-]+/g, '')) || 0,
+            ubicacion: r.UBICACION ?? r.ubicacion ?? 'Sin ubicación'
+          } as Product;
+        });
         setProducts(mapped);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -61,10 +72,55 @@ const InventoryManagement: React.FC = () => {
     load();
   }, []);
 
-  const handleDeleteProduct = (id: string) => {
-    if (confirm('¿Está seguro de eliminar este producto?')) {
-      setProducts(products.filter(product => product.id !== id));
-      alert('Producto eliminado exitosamente');
+  const handleDeleteProduct = async (id: string) => {
+    if (!confirm('¿Está seguro de eliminar este producto?')) return;
+    try {
+      // call backend to mark producto as inactive
+      const res = await deleteProduct(id);
+      if (res.ok) {
+        setProducts(products.filter(product => product.id !== id));
+        alert('Producto eliminado exitosamente');
+      } else {
+        alert('Error al eliminar producto: ' + (res.error || 'error del servidor'));
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('handleDeleteProduct error', msg);
+      alert('Error al eliminar producto: ' + msg);
+    }
+  };
+
+  const handleEditClick = (p: Product) => {
+    setEditingProduct(p);
+    setEditing(true);
+  };
+
+  const handleEditChange = (field: keyof Product, value: any) => {
+    if (!editingProduct) return;
+    setEditingProduct({ ...editingProduct, [field]: value } as Product);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingProduct) return;
+    const idNum = editingProduct.id;
+    // Prepare payload to send to manager PUT endpoint
+    const payload: any = {
+      nombre: editingProduct.nombre,
+      descripcion: editingProduct.descripcion,
+      precio: Number(editingProduct.precio) || 0,
+      stock_minimo: 0,
+      activo: 1,
+      modificado_por: 1
+    };
+
+    const res = await updateProduct(idNum, payload);
+    if (res.ok) {
+      setProducts(prev => prev.map(p => (p.id === editingProduct.id ? { ...p, nombre: editingProduct.nombre, descripcion: editingProduct.descripcion, precio: Number(editingProduct.precio) } : p)));
+      setEditing(false);
+      setEditingProduct(null);
+      alert('Producto actualizado correctamente');
+    } else {
+      alert('Error al actualizar producto: ' + (res.error || 'error desconocido'));
     }
   };
 
@@ -103,7 +159,7 @@ const InventoryManagement: React.FC = () => {
       render: (_value: any, row: Product) => (
         <div className="flex space-x-2">
           <button
-            onClick={() => alert(`Editando producto ${row.id}`)}
+            onClick={() => handleEditClick(row)}
             className="p-1 text-green-primary hover:bg-green-light rounded"
           >
             <Edit size={16} />
@@ -177,6 +233,37 @@ const InventoryManagement: React.FC = () => {
           </div>
         </div>
       </motion.div>
+      {/* Edit modal */}
+      {editing && editingProduct && (
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-lg">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold">Editar Producto</h3>
+              <button onClick={() => { setEditing(false); setEditingProduct(null); }} className="text-gray-500">✕</button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Nombre</label>
+                <input className="w-full px-3 py-2 border rounded" value={editingProduct.nombre} onChange={(e) => handleEditChange('nombre', e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Descripción</label>
+                <textarea className="w-full px-3 py-2 border rounded" value={editingProduct.descripcion} onChange={(e) => handleEditChange('descripcion', e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Precio</label>
+                <input type="number" step="0.01" className="w-full px-3 py-2 border rounded" value={String(editingProduct.precio)} onChange={(e) => handleEditChange('precio', Number(e.target.value))} />
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-4">
+                <Button variant="secondary" onClick={() => { setEditing(false); setEditingProduct(null); }}>Cancelar</Button>
+                <Button onClick={handleSaveEdit}>Guardar</Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

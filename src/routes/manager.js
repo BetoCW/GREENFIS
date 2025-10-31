@@ -1,5 +1,5 @@
 import express from 'express';
-import { poolPromise } from '../database/connection.js';
+import { poolPromise, sql } from '../database/connection.js';
 
 const router = express.Router();
 
@@ -80,6 +80,17 @@ router.post('/sucursales', async (req, res) => {
       .input('encargado_id', encargado_id)
       .query('INSERT INTO sucursales (nombre, direccion, telefono, encargado_id) OUTPUT INSERTED.* VALUES (@nombre, @direccion, @telefono, @encargado_id)');
     res.status(201).json(result.recordset[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET sucursales (activos) - used by frontend to populate location selects
+router.get('/sucursales', async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    const result = await pool.request().query('SELECT id_sucursal AS id, nombre, direccion, telefono, activo FROM sucursales WHERE activo = 1');
+    res.json(result.recordset);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -178,10 +189,61 @@ router.post('/productos', async (req, res) => {
 });
 
 router.put('/productos/:id', async (req, res) => {
-  try { const { id } = req.params; const { nombre, descripcion, precio, categoria_id, proveedor_id, stock_minimo, activo, modificado_por } = req.body; const pool = await poolPromise; await pool.request().input('id', id).input('nombre', nombre).input('descripcion', descripcion).input('precio', precio).input('categoria_id', categoria_id).input('proveedor_id', proveedor_id).input('stock_minimo', stock_minimo).input('activo', activo).input('modificado_por', modificado_por).query('UPDATE productos SET nombre=@nombre, descripcion=@descripcion, precio=@precio, categoria_id=@categoria_id, proveedor_id=@proveedor_id, stock_minimo=@stock_minimo, activo=@activo, modificado_por=@modificado_por WHERE id=@id'); res.json({ ok: true }); } catch (err) { res.status(500).json({ error: err.message }); }
+  try {
+    const { id } = req.params;
+    const { nombre, descripcion, precio, categoria_id, proveedor_id, stock_minimo, activo, modificado_por } = req.body;
+    const pool = await poolPromise;
+
+    // If id is not numeric (for example views show codes like 'PRD-001'),
+    // try to resolve it to the real numeric product id by searching codigo_barras or nombre.
+    let numericId = Number(id);
+    if (Number.isNaN(numericId)) {
+      const lookup = await pool.request().input('ident', sql.NVarChar, id).query('SELECT id FROM productos WHERE codigo_barras = @ident OR nombre = @ident');
+      if (!lookup.recordset.length) {
+        return res.status(400).json({ error: `Producto '${id}' no encontrado (no es numérico y no coincide codigo_barras/nombre)` });
+      }
+      numericId = lookup.recordset[0].id;
+    }
+
+    await pool.request()
+      .input('id', sql.Int, numericId)
+      .input('nombre', nombre)
+      .input('descripcion', descripcion)
+      .input('precio', precio)
+      .input('categoria_id', categoria_id)
+      .input('proveedor_id', proveedor_id)
+      .input('stock_minimo', stock_minimo)
+      .input('activo', activo)
+      .input('modificado_por', modificado_por)
+      .query('UPDATE productos SET nombre=@nombre, descripcion=@descripcion, precio=@precio, categoria_id=@categoria_id, proveedor_id=@proveedor_id, stock_minimo=@stock_minimo, activo=@activo, modificado_por=@modificado_por WHERE id=@id');
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-router.delete('/productos/:id', async (req, res) => { try { const { id } = req.params; const pool = await poolPromise; await pool.request().input('id', id).query('UPDATE productos SET activo = 0 WHERE id = @id'); res.json({ ok: true }); } catch (err) { res.status(500).json({ error: err.message }); } });
+router.delete('/productos/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const pool = await poolPromise;
+
+    // If id is not numeric, try to resolve it by codigo_barras or nombre (same approach as PUT)
+    let numericId = Number(id);
+    if (Number.isNaN(numericId)) {
+      const lookup = await pool.request().input('ident', sql.NVarChar, id).query('SELECT id FROM productos WHERE codigo_barras = @ident OR nombre = @ident');
+      if (!lookup.recordset.length) {
+        return res.status(400).json({ error: `Producto '${id}' no encontrado (no es numérico y no coincide codigo_barras/nombre)` });
+      }
+      numericId = lookup.recordset[0].id;
+    }
+
+    await pool.request().input('id', sql.Int, numericId).query('UPDATE productos SET activo = 0 WHERE id = @id');
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ---------- Promociones ----------
 router.get('/promociones', async (req, res) => { try { const pool = await poolPromise; const result = await pool.request().query('SELECT * FROM promociones'); res.json(result.recordset); } catch (err) { res.status(500).json({ error: err.message }); } });

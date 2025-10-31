@@ -62,6 +62,74 @@ export async function fetchProducts() {
   }
 }
 
+export async function fetchSucursales() {
+  try {
+    const res = await fetch(`${BASE}/api/manager/sucursales`);
+    if (!res.ok) throw new Error('API error');
+    const data = await res.json();
+    // expect { id, nombre, direccion, telefono }
+    return { ok: true, data };
+  } catch (e) {
+    return { ok: false, data: readStore('gf_sucursales', [] as any[]) };
+  }
+}
+
+export async function createProduct(product: any) {
+  try {
+    const res = await fetch(`${BASE}/api/manager/productos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(product)
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      // include server response text for debugging
+      const err = new Error(text || res.statusText || 'API error');
+      (err as any).status = res.status;
+      throw err;
+    }
+    const json = text ? JSON.parse(text) : {};
+    return { ok: true, data: json };
+  } catch (e: any) {
+    console.error('createProduct error', e?.message || e);
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
+export async function updateProduct(id: string | number, product: any) {
+  try {
+    const res = await fetch(`${BASE}/api/manager/productos/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(product)
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new Error(txt || res.statusText || `HTTP ${res.status}`);
+    }
+    return { ok: true };
+  } catch (e: any) {
+    console.error('updateProduct error', e?.message || e);
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
+export async function deleteProduct(id: string | number) {
+  try {
+    const res = await fetch(`${BASE}/api/manager/productos/${id}`, {
+      method: 'DELETE'
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new Error(txt || res.statusText || `HTTP ${res.status}`);
+    }
+    return { ok: true };
+  } catch (e: any) {
+    console.error('deleteProduct error', e?.message || e);
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
 export async function postVenta(payload: any, vendedor_id: number = DEFAULT_VENDEDOR, sucursal_id: number = DEFAULT_SUCURSAL) {
   try {
     const body = { ...payload, vendedor_id, sucursal_id };

@@ -3,7 +3,7 @@ import { FileText, Plus, Edit, Trash2, X } from 'lucide-react';
 import { motion } from 'framer-motion';
 import Button from '../../components/Button';
 import Table from '../../components/Table';
-import { fetchPromociones, deletePromocion, createPromocion } from '../../utils/api';
+import { fetchPromociones, deletePromocion, createPromocion, fetchProducts } from '../../utils/api';
 
 interface Promotion {
   id: number;
@@ -27,6 +27,7 @@ interface Promotion {
 const Promotions: React.FC = () => {
   const [promotions, setPromotions] = useState<Promotion[]>([]);
   const [showModal, setShowModal] = useState(false);
+  const [products, setProducts] = useState<Array<{ id: string | number; nombre: string; precio: number }>>([]);
   const [newPromotion, setNewPromotion] = useState({
     nombre: '',
     descripcion: '',
@@ -40,6 +41,45 @@ const Promotions: React.FC = () => {
     aplica_todas_sucursales: true,
     creada_por: 1 // TODO: obtener del contexto de autenticación
   });
+
+  // Load product list for selecting by name (so manager can pick product by name instead of typing ID)
+  useEffect(() => {
+    const loadProducts = async () => {
+      try {
+        const list = await fetchProducts();
+        // fetchProducts returns an array of products (fallbacks to localStore if API fails)
+        setProducts(Array.isArray(list) ? list : []);
+      } catch (err) {
+        console.error('Error loading products', err);
+      }
+    };
+    loadProducts();
+  }, []);
+
+  // Compute nuevo_precio automatically when product, tipo or valor_descuento changes
+  useEffect(() => {
+    const prodId = String(newPromotion.producto_id || '');
+    if (!prodId) return;
+    const prod = products.find(p => String(p.id) === prodId);
+    if (!prod) return;
+    const precioOriginal = Number(prod.precio ?? 0);
+    const valor = parseFloat(String(newPromotion.valor_descuento || '0'));
+
+    let computed: string = '';
+    if (newPromotion.tipo === 'descuento_porcentaje' && !isNaN(valor)) {
+      computed = (precioOriginal * (1 - (valor / 100))).toFixed(2);
+    } else if (newPromotion.tipo === 'descuento_fijo' && !isNaN(valor)) {
+      computed = Math.max(0, precioOriginal - valor).toFixed(2);
+    } else {
+      // for 2x1/3x2 or if no discount value, clear computed price
+      computed = '';
+    }
+
+    // Only update if different to avoid unnecessary renders
+    if (String(newPromotion.nuevo_precio || '') !== String(computed)) {
+      setNewPromotion(prev => ({ ...prev, nuevo_precio: computed }));
+    }
+  }, [newPromotion.producto_id, newPromotion.tipo, newPromotion.valor_descuento, products]);
 
   useEffect(() => {
     const loadPromotions = async () => {
@@ -334,16 +374,22 @@ const Promotions: React.FC = () => {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    ID Producto *
+                    Producto *
                   </label>
-                  <input
-                    type="number"
+                  <select
                     name="producto_id"
                     value={newPromotion.producto_id}
                     onChange={handleInputChange}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-primary"
                     required
-                  />
+                  >
+                    <option value="">Seleccione un producto</option>
+                    {products.map((p) => (
+                      <option key={String(p.id)} value={String(p.id)}>
+                        {p.nombre}{p.precio !== undefined ? ` - $${Number(p.precio).toFixed(2)}` : ''}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -409,7 +455,9 @@ const Promotions: React.FC = () => {
                       onChange={handleInputChange}
                       min="0"
                       step="0.01"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-primary"
+                      readOnly={newPromotion.tipo === 'descuento_porcentaje' || newPromotion.tipo === 'descuento_fijo'}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-primary bg-white"
+                      placeholder={newPromotion.nuevo_precio ? undefined : 'Se calculará automáticamente al seleccionar producto y poner descuento'}
                     />
                   </div>
                 )}
