@@ -122,3 +122,73 @@ export async function postSolicitud(body: any) {
     return { ok: false, fromServer: false, data: saved, error: errorDetail };
   }
 }
+
+// Promociones API functions
+export async function fetchPromociones() {
+  try {
+    const res = await fetch(`${BASE}/api/manager/promociones`);
+    if (!res.ok) throw new Error('API error');
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (e) {
+    // fallback to localStore
+    return { ok: false, data: readStore('gf_promociones', [] as any[]) };
+  }
+}
+
+export async function createPromocion(promocion: any) {
+  try {
+    const res = await fetch(`${BASE}/api/manager/promociones`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(promocion)
+    });
+    if (!res.ok) throw new Error('API error');
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (e) {
+    // fallback to localStore
+    const promociones = readStore('gf_promociones', [] as any[]);
+    const newPromocion = { id: Date.now(), ...promocion };
+    promociones.unshift(newPromocion);
+    writeStore('gf_promociones', promociones);
+    return { ok: false, data: newPromocion };
+  }
+}
+
+export async function updatePromocion(id: number, promocion: any) {
+  try {
+    const res = await fetch(`${BASE}/api/manager/promociones/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(promocion)
+    });
+    if (!res.ok) throw new Error('API error');
+    return { ok: true };
+  } catch (e) {
+    // fallback to localStore
+    const promociones = readStore('gf_promociones', [] as any[]);
+    const index = promociones.findIndex((p: any) => p.id === id);
+    if (index !== -1) {
+      promociones[index] = { ...promociones[index], ...promocion };
+      writeStore('gf_promociones', promociones);
+    }
+    return { ok: false };
+  }
+}
+
+export async function deletePromocion(id: number) {
+  try {
+    const res = await fetch(`${BASE}/api/manager/promociones/${id}`, {
+      method: 'DELETE'
+    });
+    if (!res.ok) throw new Error('API error');
+    return { ok: true };
+  } catch (e) {
+    // fallback to localStore
+    const promociones = readStore('gf_promociones', [] as any[]);
+    const filtered = promociones.filter((p: any) => p.id !== id);
+    writeStore('gf_promociones', filtered);
+    return { ok: false };
+  }
+}

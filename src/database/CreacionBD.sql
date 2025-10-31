@@ -3,13 +3,11 @@ GO
 
 USE GreenFis;
 GO
-
-use master
 -- =============================================
--- TABLAS MAESTRAS Y CONFIGURACIÓN
+-- TABLAS MAESTRAS Y CONFIGURACIï¿½N
 -- =============================================
 
--- Tabla de categorías para mejor normalización
+-- Tabla de categorï¿½as para mejor normalizaciï¿½n
 CREATE TABLE categorias (
     id INT PRIMARY KEY IDENTITY(1,1),
     nombre VARCHAR(100) NOT NULL,
@@ -59,7 +57,7 @@ CREATE TABLE usuarios(
     CONSTRAINT CK_usuarios_rol CHECK (rol IN('gerente', 'almacenista', 'vendedor'))
 );
 
--- Llaves foráneas para usuarios y sucursales
+-- Llaves forï¿½neas para usuarios y sucursales
 ALTER TABLE usuarios 
 ADD CONSTRAINT FK_usuarios_sucursal_id 
 FOREIGN KEY (sucursal_id) REFERENCES sucursales(id_sucursal);

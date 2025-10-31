@@ -12,7 +12,7 @@ const Layout: React.FC = () => {
   // Menu for gerente / default
   const gerenteMenu = [
     { icon: BarChart3, label: 'Dashboard', path: '/dashboard' },
-    { icon: Users, label: 'Registrar Usuario', path: '/registro-usuario' },
+    { icon: Users, label: 'Gestionar Usuario', path: '/registro-usuario' },
     { icon: FileText, label: 'Gestionar Solicitudes', path: '/gestionar-solicitudes' },
     { icon: BarChart3, label: 'Reportes de Venta', path: '/reportes-venta' },
     { icon: Package, label: 'Gestionar Inventario', path: '/gestionar-inventario' },
