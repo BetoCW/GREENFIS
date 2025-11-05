@@ -8,6 +8,7 @@ import SalesReports from './pages/gerentepages/SalesReports';
 import InventoryManagement from './pages/gerentepages/InventoryManagement';
 import ProductRegistration from './pages/gerentepages/ProductRegistration';
 import Promotions from './pages/gerentepages/Promotions';
+import SupplierManagement from './pages/gerentepages/SupplierManagement';
 // Vendedor pages
 import DashboardVendedor from './pages/vendedor/DashboardVendedor';
 import PuntoDeVenta from './pages/vendedor/PuntoDeVenta';
@@ -45,6 +46,7 @@ function App(): React.ReactElement {
                 <Route path="gestionar-solicitudes" element={<OrderManagement />} />
                 <Route path="reportes-venta" element={<SalesReports />} />
                 <Route path="gestionar-inventario" element={<InventoryManagement />} />
+                <Route path="gestionar-proveedores" element={<SupplierManagement />} />
                 <Route path="registro-producto" element={<ProductRegistration />} />
                 <Route path="promociones" element={<Promotions />} />
 

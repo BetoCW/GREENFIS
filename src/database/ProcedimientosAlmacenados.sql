@@ -401,3 +401,53 @@ BEGIN
     RETURN 0;
 END
 GO
+
+
+
+
+CREATE PROCEDURE dbo.sp_hard_delete_proveedor
+  @id INT,
+  @force BIT = 0
+AS
+BEGIN
+  SET NOCOUNT ON;
+  BEGIN TRY
+    BEGIN TRANSACTION;
+
+    -- Count dependent records
+    DECLARE @cnt_pedidos INT = 0;
+    SELECT @cnt_pedidos = COUNT(*) FROM pedidos_proveedores WHERE proveedor_id = @id;
+
+    IF @cnt_pedidos > 0 AND @force = 0
+    BEGIN
+      RAISERROR('Proveedor tiene %d pedidos. Use @force=1 para eliminar y limpiar dependencias.', 16, 1, @cnt_pedidos);
+      ROLLBACK TRANSACTION;
+      RETURN;
+    END
+
+    -- If forced, remove pedidos (WARNING: data loss). You may change this to reassign instead.
+    IF @cnt_pedidos > 0 AND @force = 1
+    BEGIN
+      DELETE FROM pedidos_proveedores WHERE proveedor_id = @id;
+    END
+
+    -- Unlink products (allow producto.proveedor_id to be NULL in schema)
+    UPDATE productos SET proveedor_id = NULL WHERE proveedor_id = @id;
+
+    -- Finally delete proveedor
+    DELETE FROM proveedores WHERE id = @id;
+
+    COMMIT TRANSACTION;
+
+    -- Optionally return counts
+    SELECT @cnt_pedidos AS pedidos_deleted, @@ROWCOUNT AS proveedores_deleted;
+  END TRY
+  BEGIN CATCH
+    IF XACT_STATE() <> 0
+      ROLLBACK TRANSACTION;
+    DECLARE @msg NVARCHAR(4000) = ERROR_MESSAGE();
+    RAISERROR('sp_hard_delete_proveedor failed: %s', 16, 1, @msg);
+    RETURN;
+  END CATCH
+END
+GO

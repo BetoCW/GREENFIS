@@ -33,4 +33,5 @@ export function seedIfEmpty() {
   if (!sales) writeStore('gf_sales', []);
   const reqs = readStore('gf_requests', null as any);
   if (!reqs) writeStore('gf_requests', []);
+  // proveedores key left empty by default; API will provide data, helpers may fallback to this key when needed
 }

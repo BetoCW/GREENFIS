@@ -204,6 +204,78 @@ export async function fetchPromociones() {
   }
 }
 
+// ---------- Proveedores ----------
+export async function fetchProveedores() {
+  try {
+    const res = await fetch(`${BASE}/api/manager/proveedores`);
+    if (!res.ok) throw new Error('API error');
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (e) {
+    return { ok: false, data: readStore('gf_proveedores', [] as any[]) };
+  }
+}
+
+export async function createProveedor(proveedor: any) {
+  try {
+    const res = await fetch(`${BASE}/api/manager/proveedores`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proveedor) });
+    if (!res.ok) throw new Error('API error');
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (e) {
+    // fallback: write to localStore
+    const proveedores = readStore('gf_proveedores', [] as any[]);
+    const nuevo = { id: `PV-${Date.now()}`, ...proveedor };
+    proveedores.unshift(nuevo);
+    writeStore('gf_proveedores', proveedores);
+    return { ok: false, data: nuevo };
+  }
+}
+
+export async function updateProveedor(id: string | number, proveedor: any) {
+  try {
+    const res = await fetch(`${BASE}/api/manager/proveedores/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(proveedor) });
+    if (!res.ok) throw new Error('API error');
+    return { ok: true };
+  } catch (e) {
+    const proveedores = readStore('gf_proveedores', [] as any[]);
+    const idx = proveedores.findIndex((p: any) => String(p.id) === String(id));
+    if (idx !== -1) {
+      proveedores[idx] = { ...proveedores[idx], ...proveedor };
+      writeStore('gf_proveedores', proveedores);
+    }
+    return { ok: false };
+  }
+}
+
+export async function deleteProveedor(id: string | number) {
+  try {
+    const res = await fetch(`${BASE}/api/manager/proveedores/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('API error');
+    return { ok: true };
+  } catch (e) {
+    const proveedores = readStore('gf_proveedores', [] as any[]);
+    const filtered = proveedores.filter((p: any) => String(p.id) !== String(id));
+    writeStore('gf_proveedores', filtered);
+    return { ok: false };
+  }
+}
+
+// Hard delete which first unlinks referenced products then removes the proveedor row
+export async function deleteProveedorHard(id: string | number) {
+  try {
+    const res = await fetch(`${BASE}/api/manager/proveedores/${id}/hard`, { method: 'DELETE' });
+    if (!res.ok) throw new Error('API error');
+    return { ok: true };
+  } catch (e) {
+    // fallback to local removal
+    const proveedores = readStore('gf_proveedores', [] as any[]);
+    const filtered = proveedores.filter((p: any) => String(p.id) !== String(id));
+    writeStore('gf_proveedores', filtered);
+    return { ok: false };
+  }
+}
+
 export async function createPromocion(promocion: any) {
   try {
     const res = await fetch(`${BASE}/api/manager/promociones`, {

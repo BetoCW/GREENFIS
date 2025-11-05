@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Users, Package, FileText, BarChart3, Gift } from 'lucide-react';
+import { Users, Package, FileText, BarChart3, Gift, Truck } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useAuth } from '../../context/AuthContext';
 
@@ -19,6 +19,13 @@ const Dashboard: React.FC = () => {
       icon: Package,
       path: '/gestionar-inventario',
       color: 'bg-green-secondary'
+    },
+    {
+      title: 'Gestionar Proveedores',
+      description: 'Agregar y administrar proveedores',
+      icon: Truck,
+      path: '/gestionar-proveedores',
+      color: 'bg-green-primary'
     },
     {
       title: 'Gestionar Solicitudes',

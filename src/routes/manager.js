@@ -165,6 +165,24 @@ router.delete('/proveedores/:id', async (req, res) => {
   try { const { id } = req.params; const pool = await poolPromise; await pool.request().input('id', id).query('UPDATE proveedores SET activo = 0 WHERE id = @id'); res.json({ ok: true }); } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Hard delete proveedor safely: unlink related products (set proveedor_id = NULL) then delete proveedor row
+router.delete('/proveedores/:id/hard', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const pool = await poolPromise;
+    // Call stored procedure that safely handles dependent rows. The proc accepts @id INT, @force BIT
+    // We pass force=1 to allow removal of dependent pedidos_proveedores if present.
+    const result = await pool.request()
+      .input('id', sql.Int, id)
+      .input('force', sql.Bit, 1)
+      .execute('sp_hard_delete_proveedor');
+    return res.json({ ok: true, info: result.recordset || result });
+  } catch (err) {
+    console.error('Stored proc hard delete error:', err && err.message);
+    return res.status(500).json({ error: err?.message || String(err) });
+  }
+});
+
 // ---------- Productos ----------
 router.get('/productos', async (req, res) => {
   try { const pool = await poolPromise; const result = await pool.request().query('SELECT * FROM productos'); res.json(result.recordset); } catch (err) { res.status(500).json({ error: err.message }); }
