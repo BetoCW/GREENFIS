@@ -14,10 +14,40 @@ export default function TransferenciasAlmacen() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    // load products, sucursales and current inventario
-    fetch(`${API}/api/almacen/productos`).then((r) => r.json()).then((d) => setProductos(d || [])).catch((e) => { console.error('prod fetch', e); setProductos([]); });
-    fetch(`${API}/api/manager/sucursales`).then((r) => r.json()).then((d) => setSucursales(d || [])).catch((e) => { console.error('sucursales fetch', e); setSucursales([]); });
-    fetch(`${API}/api/almacen/inventario`).then((r) => r.json()).then((d) => setInventario(d || [])).catch((e) => { console.error('inventario fetch', e); setInventario([]); });
+    // helper: try multiple endpoints in order and return first successful array result
+    const tryEndpoints = async (urls: string[]) => {
+      for (const u of urls) {
+        try {
+          const r = await fetch(u);
+          if (!r.ok) {
+            const txt = await r.text().catch(() => '');
+            console.warn('endpoint', u, 'failed', r.status, txt);
+            continue;
+          }
+          const d = await r.json();
+          if (Array.isArray(d)) return d;
+        } catch (err) {
+          console.warn('fetch error', u, err && (err as any).message ? (err as any).message : err);
+          continue;
+        }
+      }
+      return [];
+    };
+
+    (async () => {
+      const prodUrls = [`${API}/api/almacen/productos`, `${API}/api/manager/productos`, `${API}/api/manager/almacen/productos`];
+      const sucUrls = [`${API}/api/manager/sucursales`, `${API}/api/almacen/sucursales`];
+      const invUrls = [`${API}/api/almacen/inventario`, `${API}/api/almacen/inventario/vw`, `${API}/api/manager/almacen/inventario`];
+
+      const prods = await tryEndpoints(prodUrls);
+      setProductos(prods);
+
+      const sucs = await tryEndpoints(sucUrls);
+      setSucursales(sucs);
+
+      const inv = await tryEndpoints(invUrls);
+      setInventario(inv);
+    })();
   }, []);
 
   const availableForProduct = (producto_id: number | string) => {
@@ -36,8 +66,10 @@ export default function TransferenciasAlmacen() {
     const available = availableForProduct(productoIdNum);
     if (cantidadNum <= 0) { alert('La cantidad debe ser mayor que 0'); return; }
     if (cantidadNum > available) {
-      const ok = confirm(`Stock insuficiente en almacén (disponible: ${available}). Deseas crear la transferencia de todos modos?`);
-      if (!ok) return;
+      // Do not ask for confirmation when stock is insufficient.
+      // Inform the user and abort the transfer creation so they must adjust quantity or restock first.
+      alert(`No hay existencias suficientes en almacén para abastecer la sucursal (disponible: ${available}). Ajusta la cantidad o reabastece antes.`);
+      return;
     }
 
     setLoading(true);

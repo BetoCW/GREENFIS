@@ -14,9 +14,20 @@ export default function RecepcionPedidos() {
 
   useEffect(() => {
     // pedidos list is available via manager routes
-    fetch(`${API}/api/manager/pedidos`).then((r) => r.json()).then((data) => setPedidos(data || [])).catch((e) => { console.error('Error fetching pedidos', e); setPedidos([]); });
-    fetch(`${API}/api/almacen/productos`).then((r) => r.json()).then((d) => setProductos(d || [])).catch((e) => { console.error('Error fetching productos', e); setProductos([]); });
-    fetch(`${API}/api/manager/proveedores`).then((r) => r.json()).then((d) => setProveedores(d || [])).catch((e) => { console.error('Error fetching proveedores', e); setProveedores([]); });
+    fetch(`${API}/api/manager/pedidos`).then(async (r) => {
+      if (!r.ok) { const txt = await r.text().catch(() => ''); console.error('pedidos fetch failed', r.status, txt); setPedidos([]); return; }
+      const data = await r.json(); setPedidos(Array.isArray(data) ? data : []);
+    }).catch((e) => { console.error('Error fetching pedidos', e); setPedidos([]); });
+
+    fetch(`${API}/api/almacen/productos`).then(async (r) => {
+      if (!r.ok) { const txt = await r.text().catch(() => ''); console.error('productos fetch failed', r.status, txt); setProductos([]); return; }
+      const d = await r.json(); setProductos(Array.isArray(d) ? d : []);
+    }).catch((e) => { console.error('Error fetching productos', e); setProductos([]); });
+
+    fetch(`${API}/api/manager/proveedores`).then(async (r) => {
+      if (!r.ok) { const txt = await r.text().catch(() => ''); console.error('proveedores fetch failed', r.status, txt); setProveedores([]); return; }
+      const d = await r.json(); setProveedores(Array.isArray(d) ? d : []);
+    }).catch((e) => { console.error('Error fetching proveedores', e); setProveedores([]); });
   }, []);
 
   const findProducto = (ident: string) => {
@@ -35,16 +46,28 @@ export default function RecepcionPedidos() {
     } catch (e) { console.error(e); alert('Error al marcar recepción'); }
   };
 
-  const rechazarPedido = async (id: number) => {
-    const confirmado = confirm('Confirmar rechazo del pedido?');
+  const aprobarPedido = async (id: number) => {
+    const confirmado = confirm('Aprobar pedido? (Esto marcará el pedido como "aprobado")');
     if (!confirmado) return;
     try {
-      // manager route supports updating estado
-      const res = await fetch(`${API}/api/manager/pedidos/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ estado: 'rechazado' }) });
+      const payload = { estado: 'aprobado', aprobado_por: user?.id ?? null, fecha_aprobacion: new Date().toISOString() };
+      const res = await fetch(`${API}/api/manager/pedidos/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (!res.ok) throw new Error(await res.text());
-      alert('Pedido rechazado');
+      alert('Pedido aprobado');
+      setPedidos((p) => p.map((it) => it.id === id ? { ...it, estado: 'aprobado', aprobado_por: user?.id ?? null } : it));
+    } catch (e) { console.error(e); alert('Error al aprobar pedido'); }
+  };
+
+  const rechazarPedido = async (id: number) => {
+    const confirmado = confirm('Confirmar rechazo y eliminación del pedido? Esta acción eliminará la solicitud.');
+    if (!confirmado) return;
+    try {
+      // call DELETE endpoint we added to manager routes
+      const res = await fetch(`${API}/api/manager/pedidos/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(await res.text());
+      alert('Pedido eliminado');
       setPedidos((p) => p.filter((x) => x.id !== id));
-    } catch (e) { console.error(e); alert('Error al rechazar pedido'); }
+    } catch (e) { console.error(e); alert('Error al eliminar pedido'); }
   };
 
   const onScanSubmit = (ev?: any) => {
@@ -99,6 +122,7 @@ export default function RecepcionPedidos() {
                 <td className="px-3 py-2 text-sm">{pd.estado ?? '-'}</td>
                 <td className="px-3 py-2 text-sm">
                   <div className="flex space-x-2">
+                    <Button type="button" onClick={() => aprobarPedido(pd.id)} className="px-2 py-1" size="sm">Aprobar</Button>
                     <Button type="button" onClick={() => marcarRecepcion(pd.id)} className="px-2 py-1" size="sm">Marcar recibido</Button>
                     <Button type="button" onClick={() => rechazarPedido(pd.id)} className="px-2 py-1" size="sm">Rechazar</Button>
                   </div>

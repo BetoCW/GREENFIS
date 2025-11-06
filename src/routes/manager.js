@@ -383,6 +383,18 @@ router.post('/pedidos', async (req, res) => { try { const { proveedor_id, solici
 
 router.put('/pedidos/:id', async (req, res) => { try { const { id } = req.params; const { estado, aprobado_por, fecha_aprobacion } = req.body; const pool = await poolPromise; await pool.request().input('id', id).input('estado', estado).input('aprobado_por', aprobado_por).input('fecha_aprobacion', fecha_aprobacion).query('UPDATE pedidos_proveedores SET estado=@estado, aprobado_por=@aprobado_por, fecha_aprobacion=@fecha_aprobacion WHERE id=@id'); res.json({ ok: true }); } catch (err) { res.status(500).json({ error: err.message }); } });
 
+// Delete a pedidos_proveedores row (used when a pedido is rejected and should be removed)
+router.delete('/pedidos/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const pool = await poolPromise;
+    await pool.request().input('id', id).query('DELETE FROM pedidos_proveedores WHERE id = @id');
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ---------- Reportes ----------
 router.post('/reportes', async (req, res) => { try { const { tipo, nombre, sucursal_id, periodo_inicio, periodo_fin, generado_por, parametros } = req.body; const pool = await poolPromise; const result = await pool.request().input('tipo', tipo).input('nombre', nombre).input('sucursal_id', sucursal_id).input('periodo_inicio', periodo_inicio).input('periodo_fin', periodo_fin).input('generado_por', generado_por).input('parametros', parametros).query('INSERT INTO reportes (tipo,nombre,sucursal_id,periodo_inicio,periodo_fin,generado_por,parametros) OUTPUT INSERTED.* VALUES (@tipo,@nombre,@sucursal_id,@periodo_inicio,@periodo_fin,@generado_por,@parametros)'); res.status(201).json(result.recordset[0]); } catch (err) { res.status(500).json({ error: err.message }); } });
 
