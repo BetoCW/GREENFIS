@@ -11,7 +11,18 @@ export default function InventarioAlmacen() {
   const [filter, setFilter] = useState<'all'|'agotado'|'bajo'|'normal'>('all');
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState<any | null>(null); // { id, cantidad, ubicacion }
+  const [sucursales, setSucursales] = useState<any[]>([]);
   const { user } = useAuth();
+
+  // sanitize ubicacion text to collapse duplicated adjacent words
+  const sanitizeUbicacion = (v: any) => {
+    if (!v && v !== 0) return '';
+    const s = String(v).trim();
+    if (!s) return '';
+    const parts = s.split(/\s+/);
+    const filtered = parts.filter((w, i) => i === 0 || w.toLowerCase() !== parts[i - 1].toLowerCase());
+    return filtered.join(' ');
+  };
 
   async function load() {
     setLoading(true);
@@ -20,14 +31,14 @@ export default function InventarioAlmacen() {
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       // normalize to lowercase keys used below
-      const mapped = data.map((r: any) => ({
+  const mapped = data.map((r: any) => ({
         // coerce product id to number when possible to avoid identifier conflicts
         id: Number(r.producto_id ?? r.producto_id_real ?? r.id),
         codigo: String(r.ID ?? r.id ?? (r.producto_id ?? r.producto_id_real ?? '')),
         nombre: r.NOMBRE ?? r.nombre ?? r.producto ?? '',
         descripcion: r.DESCRIPCION ?? r.descripcion ?? '',
         cantidad: Number(r.CANTIDAD ?? r.cantidad ?? 0),
-        ubicacion: r.UBICACION ?? r.ubicacion ?? '',
+        ubicacion: sanitizeUbicacion(r.UBICACION ?? r.ubicacion ?? ''),
         stock_minimo: Number(r.stock_minimo ?? r.STOCK_MINIMO ?? 0)
       }));
       setItems(mapped);
@@ -43,11 +54,32 @@ export default function InventarioAlmacen() {
 
   useEffect(() => { load(); }, []);
 
+  // load sucursales for ubicacion select
+  useEffect(() => {
+    async function loadSuc() {
+      try {
+        const res = await fetch(`${API}/api/manager/sucursales`);
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        setSucursales(Array.isArray(data) ? data : []);
+      } catch (e) {
+        console.warn('Failed to load sucursales', e);
+        setSucursales([]);
+      }
+    }
+    loadSuc();
+  }, []);
+
   useEffect(() => {
     // apply search + filter
     const q = String(search || '').trim().toLowerCase();
     let out = items.slice();
-    if (q) out = out.filter((it: any) => (String(it.nombre || '').toLowerCase().includes(q) || String(it.codigo || '').toLowerCase().includes(q) || String(it.id || '').toLowerCase().includes(q)));
+    if (q) out = out.filter((it: any) => (
+      String(it.nombre || '').toLowerCase().includes(q)
+      || String(it.codigo || '').toLowerCase().includes(q)
+      || String(it.id || '').toLowerCase().includes(q)
+      || String(it.ubicacion || '').toLowerCase().includes(q)
+    ));
     if (filter === 'agotado') out = out.filter((it: any) => it.cantidad === 0);
     else if (filter === 'bajo') out = out.filter((it: any) => it.cantidad <= (it.stock_minimo ?? 0));
     else if (filter === 'normal') out = out.filter((it: any) => it.cantidad > (it.stock_minimo ?? 0));
@@ -65,7 +97,7 @@ export default function InventarioAlmacen() {
       const res = await fetch(`${API}/api/almacen/inventario/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (!res.ok) throw new Error(await res.text());
       // optimistic update in UI
-      setItems((prev) => prev.map((p) => (String(p.id) === String(id) ? { ...p, cantidad: Number(cantidad), ubicacion } : p)));
+      setItems((prev) => prev.map((p) => (String(p.id) === String(id) ? { ...p, cantidad: Number(cantidad), ubicacion: sanitizeUbicacion(ubicacion) } : p)));
       setEditing(null);
       alert('Cantidad actualizada');
     } catch (e) {
@@ -79,7 +111,7 @@ export default function InventarioAlmacen() {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-semibold">Inventario - Almacén</h1>
         <div className="space-x-2">
-          <input className="border rounded px-3 py-1" placeholder="Buscar por nombre, código o id" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <input className="border rounded px-3 py-1" placeholder="Buscar por nombre, código o sucursal" value={search} onChange={(e) => setSearch(e.target.value)} />
           <select value={filter} onChange={(e) => setFilter(e.target.value as any)} className="border rounded px-2 py-1">
             <option value="all">Todos</option>
             <option value="agotado">Agotado</option>
@@ -136,7 +168,15 @@ export default function InventarioAlmacen() {
             </div>
             <div className="mb-4">
               <label className="block text-sm text-gray-600">Ubicación</label>
-              <input className="border px-3 py-2 w-full" value={editing.ubicacion} onChange={(e) => setEditing((s: any) => ({ ...s, ubicacion: e.target.value }))} />
+              <select className="border px-3 py-2 w-full" value={editing.ubicacion} onChange={(e) => setEditing((s: any) => ({ ...s, ubicacion: e.target.value }))}>
+                <option value="">-- Seleccione sucursal --</option>
+                {sucursales.map((s) => (
+                  <option key={s.id} value={s.nombre}>{s.nombre}</option>
+                ))}
+                {editing && editing.ubicacion && !sucursales.find(s => s.nombre === editing.ubicacion) && (
+                  <option value={editing.ubicacion}>{editing.ubicacion}</option>
+                )}
+              </select>
             </div>
             <div className="flex justify-end space-x-2">
               <Button type="button" onClick={() => setEditing(null)} className="px-3 py-1" size="sm">Cancelar</Button>

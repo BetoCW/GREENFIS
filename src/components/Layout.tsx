@@ -18,6 +18,7 @@ const Layout: React.FC = () => {
     { icon: Package, label: 'Gestionar Inventario', path: '/gestionar-inventario' },
     { icon: Settings, label: 'Registro Producto', path: '/registro-producto' },
     { icon: Gift, label: 'Promociones', path: '/promociones' },
+  { icon: Truck, label: 'Proveedores', path: '/gestionar-proveedores' },
   ];
 
   // Menu for vendedor

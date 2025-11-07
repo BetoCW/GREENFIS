@@ -127,7 +127,7 @@ export default function TransferenciasAlmacen() {
       </div>
 
       <div className="bg-white rounded-lg shadow-soft p-4 border">
-        <h2 className="font-medium mb-2">Transferencias creadas (local)</h2>
+        <h2 className="font-medium mb-2">Transferencias creadas</h2>
         <ul>
           {list.map((t) => <li key={t.id} className="py-1">ID {t.id} - Producto {t.producto_id} - Cant {t.cantidad} - Suc dest {t.sucursal_destino_id}</li>)}
           {list.length === 0 && <li className="text-sm text-gray-500">No hay transferencias creadas aquí</li>}

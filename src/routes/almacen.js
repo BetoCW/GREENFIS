@@ -18,28 +18,48 @@ router.get('/inventario', async (req, res) => {
 router.get('/inventario/vw', async (req, res) => {
   try {
     const pool = await poolPromise;
-    const result = await pool.request().query('SELECT * FROM vw_gestion_inventario');
-    res.json(result.recordset);
+    try {
+      const result = await pool.request().query('SELECT * FROM vw_gestion_inventario');
+      return res.json(result.recordset);
+    } catch (viewErr) {
+      console.warn('vw_gestion_inventario query failed, attempting fallback JOIN query', viewErr && viewErr.message);
+      // fallback: join base tables to build similar result if the view is missing or has permission issues
+      const fallbackQ = `
+        SELECT ia.id, ia.producto_id, p.nombre AS producto, ia.cantidad, ia.ubicacion, ia.ultima_actualizacion, ia.actualizado_por
+        FROM inventario_almacen ia
+        LEFT JOIN productos p ON p.id = ia.producto_id
+      `;
+      try {
+        const fallbackRes = await pool.request().query(fallbackQ);
+        return res.json(fallbackRes.recordset);
+      } catch (fbErr) {
+        console.error('Fallback JOIN query also failed for /almacen/inventario/vw', fbErr);
+        return res.status(500).json({ error: fbErr.message });
+      }
+    }
   } catch (err) {
-    console.error('GET /almacen/inventario/vw error', err && err.message);
-    res.status(500).json({ error: err.message });
+    console.error('GET /almacen/inventario/vw error', err);
+    res.status(500).json({ error: err.message || String(err) });
   }
 });
 
-// Adjust stock in central warehouse
+// Adjust stock in central warehouse - return the updated row so clients can confirm persistence
 router.put('/inventario/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { cantidad, actualizado_por, ubicacion } = req.body;
     const pool = await poolPromise;
-    await pool.request()
+    // Use OUTPUT INSERTED.* to return the updated row
+    const result = await pool.request()
       .input('id', id)
       .input('cantidad', cantidad)
       .input('actualizado_por', actualizado_por)
       .input('ubicacion', ubicacion)
-      .query('UPDATE inventario_almacen SET cantidad=@cantidad, actualizado_por=@actualizado_por, ubicacion=@ubicacion, ultima_actualizacion=GETDATE() WHERE id=@id');
-    res.json({ ok: true });
+      .query('UPDATE inventario_almacen SET cantidad=@cantidad, actualizado_por=@actualizado_por, ubicacion=@ubicacion, ultima_actualizacion=GETDATE() OUTPUT INSERTED.* WHERE id=@id');
+    if (result && result.recordset && result.recordset.length) return res.json(result.recordset[0]);
+    return res.status(404).json({ error: 'Inventario item no encontrado' });
   } catch (err) {
+    console.error('PUT /almacen/inventario/:id error', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -66,9 +86,10 @@ router.put('/transferencias/:id/complete', async (req, res) => {
     const { id } = req.params;
     const { recibido_por } = req.body;
     const pool = await poolPromise;
-    await pool.request().input('id', id).input('recibido_por', recibido_por).query("UPDATE transferencias_inventario SET estado='completada', fecha_completado=GETDATE(), recibido_por=@recibido_por WHERE id=@id");
-    res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+    const result = await pool.request().input('id', id).input('recibido_por', recibido_por).query("UPDATE transferencias_inventario SET estado='completada', fecha_completado=GETDATE(), recibido_por=@recibido_por OUTPUT INSERTED.* WHERE id=@id");
+    if (result && result.recordset && result.recordset.length) return res.json(result.recordset[0]);
+    return res.status(404).json({ error: 'Transferencia no encontrada' });
+  } catch (err) { console.error('PUT /almacen/transferencias/:id/complete error', err); res.status(500).json({ error: err.message }); }
 });
 
 // Recepción de pedidos de proveedores (mark as recibido and update inventario_almacen)
@@ -96,7 +117,78 @@ router.put('/pedidos/:id/recepcion', async (req, res) => {
 
 // Products read-only for almacenista
 router.get('/productos', async (req, res) => {
-  try { const pool = await poolPromise; const result = await pool.request().query('SELECT id, codigo_barras, nombre, descripcion, precio, proveedor_id, stock_minimo, activo FROM productos'); res.json(result.recordset); } catch (err) { res.status(500).json({ error: err.message }); }
+  try {
+    const pool = await poolPromise;
+    const result = await pool.request().query('SELECT id, codigo_barras, nombre, descripcion, precio, proveedor_id, stock_minimo, activo FROM productos');
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('GET /almacen/productos error', err?.message || err);
+    // Fail-soft: devuelve lista vacía para no romper la UI del almacenista
+    res.json([]);
+  }
+});
+
+// Expose pedidos_proveedores under /api/almacen for almacenista UI compatibility
+router.get('/pedidos', async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    const result = await pool.request().query('SELECT * FROM pedidos_proveedores');
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('GET /almacen/pedidos error', err?.message || err);
+    // Fail-soft: devuelve lista vacía para no romper la UI del almacenista
+    res.json([]);
+  }
+});
+
+// Expose proveedores under /api/almacen to avoid cross-router dependency from the UI
+router.get('/proveedores', async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    const result = await pool.request().query('SELECT * FROM proveedores');
+    res.json(result.recordset);
+  } catch (err) {
+    console.error('GET /almacen/proveedores error', err?.message || err);
+    // Fail-soft: devuelve lista vacía para no romper la UI del almacenista
+    res.json([]);
+  }
+});
+
+// Debug: sample productos rows - quick check for schema/permission issues
+router.get('/debug/productos-sample', async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    const result = await pool.request().query('SELECT TOP (5) id, nombre, codigo_barras FROM productos');
+    return res.json({ ok: true, sample: result.recordset });
+  } catch (err) {
+    console.error('GET /almacen/debug/productos-sample error', err?.message || err);
+    return res.status(500).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// Debug: sample proveedores rows - for almacenista UI fallback and diagnostics
+router.get('/debug/proveedores-sample', async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    const result = await pool.request().query('SELECT TOP (5) id, nombre, telefono FROM proveedores');
+    return res.json({ ok: true, sample: result.recordset });
+  } catch (err) {
+    console.error('GET /almacen/debug/proveedores-sample error', err?.message || err);
+    return res.status(500).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+// Health check at router level so frontend on /api/almacen can validate DB connectivity
+router.get('/health/db', async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    const result = await pool.request().query('SELECT 1 AS ok');
+    if (result && result.recordset && result.recordset.length) return res.json({ ok: true });
+    return res.status(500).json({ ok: false, error: 'DB returned unexpected result' });
+  } catch (err) {
+    console.error('/almacen/health/db error', err && err.message);
+    return res.status(500).json({ ok: false, error: err?.message || String(err) });
+  }
 });
 
 // Solicitudes: allow processing (complete or reject) but not creation from almacenista

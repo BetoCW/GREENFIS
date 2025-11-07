@@ -187,3 +187,46 @@ WHERE p.activo = 1;
 GO
 
 select *from vw_gestion_inventario;
+
+
+
+
+
+
+-------------------------------------------------------------------------------
+------vistas de Almacenista
+-------------------------------------------------------------------------------
+-- Vista que debería ver el almacenista
+SELECT 
+    p.id,
+    p.nombre as producto,
+    p.codigo_barras,
+    ia.cantidad as stock_almacen,
+    p.stock_minimo,
+    cat.nombre as categoria,
+    ia.ubicacion,
+    CASE 
+        WHEN ia.cantidad <= p.stock_minimo THEN 'CRÍTICO'
+        WHEN ia.cantidad <= p.stock_minimo * 1.5 THEN 'BAJO'
+        ELSE 'NORMAL'
+    END as estado_stock
+FROM inventario_almacen ia
+JOIN productos p ON ia.producto_id = p.id
+JOIN categorias cat ON p.categoria_id = cat.id
+WHERE p.activo = 1;
+
+-- Solicitudes pendientes de tiendas
+SELECT 
+    sr.id,
+    s.nombre as sucursal_solicitante,
+    p.nombre as producto,
+    sr.cantidad_solicitada,
+    sr.fecha_solicitud,
+    DATEDIFF(hour, sr.fecha_solicitud, GETDATE()) as horas_pendiente,
+    u.nombre as solicitante
+FROM solicitudes_reabastecimiento sr
+JOIN sucursales s ON sr.sucursal_id = s.id_sucursal
+JOIN productos p ON sr.producto_id = p.id
+JOIN usuarios u ON sr.solicitante_id = u.id_usuario
+WHERE sr.estado = 'pendiente'
+ORDER BY sr.fecha_solicitud ASC;

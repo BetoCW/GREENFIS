@@ -14,6 +14,19 @@ app.use(morgan('dev'));
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
+// DB health check: simple query to validate connectivity
+app.get('/api/health/db', async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    const result = await pool.request().query('SELECT 1 AS ok');
+    if (result && result.recordset && result.recordset.length) return res.json({ ok: true });
+    return res.status(500).json({ ok: false, error: 'DB returned unexpected result' });
+  } catch (err) {
+    console.error('/api/health/db error', err && err.message);
+    return res.status(500).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
 // example route that queries products (kept for quick smoke tests)
 app.get('/productos', async (req, res) => {
   try {

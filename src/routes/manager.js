@@ -89,10 +89,23 @@ router.post('/sucursales', async (req, res) => {
 router.get('/sucursales', async (req, res) => {
   try {
     const pool = await poolPromise;
-    const result = await pool.request().query('SELECT id_sucursal AS id, nombre, direccion, telefono, activo FROM sucursales WHERE activo = 1');
-    res.json(result.recordset);
+    try {
+      const result = await pool.request().query('SELECT id_sucursal AS id, nombre, direccion, telefono, activo FROM sucursales WHERE activo = 1');
+      return res.json(result.recordset);
+    } catch (qErr) {
+      console.warn('GET /manager/sucursales primary query failed:', qErr && qErr.message);
+      // fallback: try a simpler query in case some columns are missing or permissions differ
+      try {
+        const fb = await pool.request().query('SELECT id_sucursal AS id, nombre FROM sucursales');
+        return res.json(fb.recordset);
+      } catch (fbErr) {
+        console.error('GET /manager/sucursales fallback query also failed:', fbErr);
+        return res.status(500).json({ error: fbErr?.message || String(fbErr) });
+      }
+    }
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('GET /manager/sucursales error (connection/pool):', err);
+    return res.status(500).json({ error: err?.message || String(err) });
   }
 });
 

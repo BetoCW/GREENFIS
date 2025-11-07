@@ -144,24 +144,9 @@ export async function postVenta(payload: any, vendedor_id: number = DEFAULT_VEND
     const json = await res.json();
     return json;
   } catch (e) {
-    // fallback: write to localStore gf_sales
-  const salesRaw = readStore('gf_sales', [] as any[]);
-  const sales = Array.isArray(salesRaw) ? salesRaw : [];
-  // include vendedor_id and sucursal_id if provided
-  const savedSale = { ...payload, vendedor_id: (payload.vendedor_id ?? payload.vendedorId ?? null), sucursal_id: (payload.sucursal_id ?? payload.sucursalId ?? null) };
-  sales.unshift(savedSale);
-  writeStore('gf_sales', sales);
-    // also decrement local product stock
-    const products = readStore('gf_products', []);
-    const updated = products.map((p: any) => {
-      // support both shapes: { productId, qty } and { producto_id, cantidad }
-      const it = payload.items.find((i: any) => (i.productId && (i.productId === p.id || i.productId === String(p.id))) || (i.producto_id && (String(i.producto_id) === String(p.id))));
-      if (!it) return p;
-      const qty = (it.qty ?? it.cantidad ?? 0);
-      return { ...p, cantidad: Math.max(0, p.cantidad - qty) };
-    });
-    writeStore('gf_products', updated);
-    return { ok: true };
+    // Do NOT fallback to local store for sales: return explicit error so caller can surface server failure
+    console.error('postVenta error - not persisted:', (e as any)?.message || e);
+    return { ok: false, error: (e as any)?.message || String(e) };
   }
 }
 
@@ -180,14 +165,8 @@ export async function postSolicitud(body: any) {
     const json = text ? JSON.parse(text) : {};
     return { ok: true, fromServer: true, data: json };
   } catch (e: any) {
-    // fallback to local store but return structured result so caller knows it wasn't sent
-    const listRaw = readStore('gf_requests', [] as any[]);
-    const list = Array.isArray(listRaw) ? listRaw : [];
-    const saved = { id: `REQ-${Date.now()}`, ...body, estado: 'pendiente', fecha: new Date().toISOString() };
-    list.unshift(saved);
-    writeStore('gf_requests', list);
-    const errorDetail = { message: e?.message || String(e), status: e?.status || null };
-    return { ok: false, fromServer: false, data: saved, error: errorDetail };
+    console.error('postSolicitud error - not persisted:', (e as any)?.message || e);
+    return { ok: false, fromServer: false, error: (e as any)?.message || String(e) };
   }
 }
 
@@ -223,12 +202,8 @@ export async function createProveedor(proveedor: any) {
     const data = await res.json();
     return { ok: true, data };
   } catch (e) {
-    // fallback: write to localStore
-    const proveedores = readStore('gf_proveedores', [] as any[]);
-    const nuevo = { id: `PV-${Date.now()}`, ...proveedor };
-    proveedores.unshift(nuevo);
-    writeStore('gf_proveedores', proveedores);
-    return { ok: false, data: nuevo };
+    console.error('createProveedor error - not persisted:', (e as any)?.message || e);
+    return { ok: false, error: (e as any)?.message || String(e) };
   }
 }
 
@@ -238,13 +213,8 @@ export async function updateProveedor(id: string | number, proveedor: any) {
     if (!res.ok) throw new Error('API error');
     return { ok: true };
   } catch (e) {
-    const proveedores = readStore('gf_proveedores', [] as any[]);
-    const idx = proveedores.findIndex((p: any) => String(p.id) === String(id));
-    if (idx !== -1) {
-      proveedores[idx] = { ...proveedores[idx], ...proveedor };
-      writeStore('gf_proveedores', proveedores);
-    }
-    return { ok: false };
+    console.error('updateProveedor error - not persisted locally:', (e as any)?.message || e);
+    return { ok: false, error: (e as any)?.message || String(e) };
   }
 }
 
@@ -254,10 +224,8 @@ export async function deleteProveedor(id: string | number) {
     if (!res.ok) throw new Error('API error');
     return { ok: true };
   } catch (e) {
-    const proveedores = readStore('gf_proveedores', [] as any[]);
-    const filtered = proveedores.filter((p: any) => String(p.id) !== String(id));
-    writeStore('gf_proveedores', filtered);
-    return { ok: false };
+    console.error('deleteProveedor error - not persisted:', (e as any)?.message || e);
+    return { ok: false, error: (e as any)?.message || String(e) };
   }
 }
 
@@ -268,11 +236,8 @@ export async function deleteProveedorHard(id: string | number) {
     if (!res.ok) throw new Error('API error');
     return { ok: true };
   } catch (e) {
-    // fallback to local removal
-    const proveedores = readStore('gf_proveedores', [] as any[]);
-    const filtered = proveedores.filter((p: any) => String(p.id) !== String(id));
-    writeStore('gf_proveedores', filtered);
-    return { ok: false };
+    console.error('deleteProveedorHard error - not persisted:', (e as any)?.message || e);
+    return { ok: false, error: (e as any)?.message || String(e) };
   }
 }
 
@@ -287,12 +252,8 @@ export async function createPromocion(promocion: any) {
     const data = await res.json();
     return { ok: true, data };
   } catch (e) {
-    // fallback to localStore
-    const promociones = readStore('gf_promociones', [] as any[]);
-    const newPromocion = { id: Date.now(), ...promocion };
-    promociones.unshift(newPromocion);
-    writeStore('gf_promociones', promociones);
-    return { ok: false, data: newPromocion };
+    console.error('createPromocion error - not persisted:', (e as any)?.message || e);
+    return { ok: false, error: (e as any)?.message || String(e) };
   }
 }
 
@@ -306,14 +267,8 @@ export async function updatePromocion(id: number, promocion: any) {
     if (!res.ok) throw new Error('API error');
     return { ok: true };
   } catch (e) {
-    // fallback to localStore
-    const promociones = readStore('gf_promociones', [] as any[]);
-    const index = promociones.findIndex((p: any) => p.id === id);
-    if (index !== -1) {
-      promociones[index] = { ...promociones[index], ...promocion };
-      writeStore('gf_promociones', promociones);
-    }
-    return { ok: false };
+    console.error('updatePromocion error - not persisted:', (e as any)?.message || e);
+    return { ok: false, error: (e as any)?.message || String(e) };
   }
 }
 
@@ -325,10 +280,7 @@ export async function deletePromocion(id: number) {
     if (!res.ok) throw new Error('API error');
     return { ok: true };
   } catch (e) {
-    // fallback to localStore
-    const promociones = readStore('gf_promociones', [] as any[]);
-    const filtered = promociones.filter((p: any) => p.id !== id);
-    writeStore('gf_promociones', filtered);
-    return { ok: false };
+    console.error('deletePromocion error - not persisted:', (e as any)?.message || e);
+    return { ok: false, error: (e as any)?.message || String(e) };
   }
 }

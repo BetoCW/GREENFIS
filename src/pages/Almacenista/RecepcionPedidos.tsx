@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import Button from '../../components/Button';
 import { useAuth } from '../../context/AuthContext';
 
@@ -9,82 +9,95 @@ export default function RecepcionPedidos() {
   const [pedidos, setPedidos] = useState<any[]>([]);
   const [productos, setProductos] = useState<any[]>([]);
   const [proveedores, setProveedores] = useState<any[]>([]);
-  const [scan, setScan] = useState('');
-  const scanRef = useRef<HTMLInputElement | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [processingId, setProcessingId] = useState<number | null>(null);
 
-  useEffect(() => {
-    // pedidos list is available via manager routes
-    fetch(`${API}/api/manager/pedidos`).then(async (r) => {
-      if (!r.ok) { const txt = await r.text().catch(() => ''); console.error('pedidos fetch failed', r.status, txt); setPedidos([]); return; }
-      const data = await r.json(); setPedidos(Array.isArray(data) ? data : []);
-    }).catch((e) => { console.error('Error fetching pedidos', e); setPedidos([]); });
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // Simple load: get pedidos, productos and proveedores from /api/almacen
+      // Carga simple secuencial; cada fetch ya retorna [] si el backend falla (fail-soft)
+      const pedidosResp = await fetch(`${API}/api/almacen/pedidos`).catch(() => null);
+      const productosResp = await fetch(`${API}/api/almacen/productos`).catch(() => null);
+      const proveedoresResp = await fetch(`${API}/api/almacen/proveedores`).catch(() => null);
 
-    fetch(`${API}/api/almacen/productos`).then(async (r) => {
-      if (!r.ok) { const txt = await r.text().catch(() => ''); console.error('productos fetch failed', r.status, txt); setProductos([]); return; }
-      const d = await r.json(); setProductos(Array.isArray(d) ? d : []);
-    }).catch((e) => { console.error('Error fetching productos', e); setProductos([]); });
+      const pedidosData = pedidosResp && pedidosResp.ok ? await pedidosResp.json().catch(() => []) : [];
+      const productosData = productosResp && productosResp.ok ? await productosResp.json().catch(() => []) : [];
+      const proveedoresData = proveedoresResp && proveedoresResp.ok ? await proveedoresResp.json().catch(() => []) : [];
 
-    fetch(`${API}/api/manager/proveedores`).then(async (r) => {
-      if (!r.ok) { const txt = await r.text().catch(() => ''); console.error('proveedores fetch failed', r.status, txt); setProveedores([]); return; }
-      const d = await r.json(); setProveedores(Array.isArray(d) ? d : []);
-    }).catch((e) => { console.error('Error fetching proveedores', e); setProveedores([]); });
-  }, []);
+      setPedidos(Array.isArray(pedidosData) ? pedidosData : []);
+      setProductos(Array.isArray(productosData) ? productosData : []);
+      setProveedores(Array.isArray(proveedoresData) ? proveedoresData : []);
 
-  const findProducto = (ident: string) => {
-    const v = String(ident).trim();
-    return productos.find((p: any) => String(p.id) === v || String(p.codigo_barras) === v || String(p.nombre).toLowerCase() === v.toLowerCase());
+      // Si todas vacías y alguna respuesta fue null, mostrar error único
+      if (!pedidosResp || !productosResp || !proveedoresResp) {
+        setError('Error de red al cargar datos (alguna petición falló)');
+      } else if (!pedidosResp.ok && !productosResp.ok && !proveedoresResp.ok) {
+        setError('Todas las peticiones devolvieron error en el servidor');
+      } else {
+        setError(null);
+      }
+
+    } catch (e) {
+      console.error('Unexpected load error', e);
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
   };
+
+  useEffect(() => { load(); }, []);
 
   const marcarRecepcion = async (id: number) => {
     const confirmado = confirm('Marcar pedido como recibido?');
     if (!confirmado) return;
+    setProcessingId(id);
     try {
       const res = await fetch(`${API}/api/almacen/pedidos/${id}/recepcion`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recibido_por: user?.id ?? null }) });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(txt || `HTTP ${res.status}`);
+      }
+      // success: remove from list
       alert('Pedido marcado como recibido');
       setPedidos((p) => p.filter((x) => x.id !== id));
-    } catch (e) { console.error(e); alert('Error al marcar recepción'); }
+  } catch (e) { console.error(e); const msg = (e as any)?.message || String(e); alert('Error al marcar recepción: ' + msg); }
+    setProcessingId(null);
   };
-
   const aprobarPedido = async (id: number) => {
     const confirmado = confirm('Aprobar pedido? (Esto marcará el pedido como "aprobado")');
     if (!confirmado) return;
+    setProcessingId(id);
     try {
       const payload = { estado: 'aprobado', aprobado_por: user?.id ?? null, fecha_aprobacion: new Date().toISOString() };
       const res = await fetch(`${API}/api/manager/pedidos/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(txt || `HTTP ${res.status}`);
+      }
       alert('Pedido aprobado');
       setPedidos((p) => p.map((it) => it.id === id ? { ...it, estado: 'aprobado', aprobado_por: user?.id ?? null } : it));
-    } catch (e) { console.error(e); alert('Error al aprobar pedido'); }
+  } catch (e) { console.error(e); const msg = (e as any)?.message || String(e); alert('Error al aprobar pedido: ' + msg); }
+    setProcessingId(null);
   };
 
   const rechazarPedido = async (id: number) => {
     const confirmado = confirm('Confirmar rechazo y eliminación del pedido? Esta acción eliminará la solicitud.');
     if (!confirmado) return;
+    setProcessingId(id);
     try {
-      // call DELETE endpoint we added to manager routes
       const res = await fetch(`${API}/api/manager/pedidos/${id}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '');
+        throw new Error(txt || `HTTP ${res.status}`);
+      }
       alert('Pedido eliminado');
       setPedidos((p) => p.filter((x) => x.id !== id));
-    } catch (e) { console.error(e); alert('Error al eliminar pedido'); }
+  } catch (e) { console.error(e); const msg = (e as any)?.message || String(e); alert('Error al eliminar pedido: ' + msg); }
+    setProcessingId(null);
   };
-
-  const onScanSubmit = (ev?: any) => {
-    if (ev) ev.preventDefault();
-    const code = scan.trim();
-    if (!code) return;
-    // try to match product -> find a pending pedido for that product
-    const prod = findProducto(code);
-    if (!prod) { alert('Producto no encontrado por código/ID'); setScan(''); scanRef.current?.focus(); return; }
-  const pedido = pedidos.find((pd) => Number(pd.producto_id) === Number(prod.id) && pd.estado !== 'recibido');
-    if (!pedido) { alert('No hay pedidos pendientes para ese producto'); setScan(''); scanRef.current?.focus(); return; }
-    // auto mark receive
-    marcarRecepcion(pedido.id);
-    setScan('');
-    scanRef.current?.focus();
-  };
-
   const getProductoNombre = (pid: number) => {
     const p = productos.find((x) => Number(x.id) === Number(pid));
     return p ? p.nombre : String(pid);
@@ -98,16 +111,29 @@ export default function RecepcionPedidos() {
   return (
     <div className="max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-semibold">Recepción de Pedidos - Almacén</h1>
-        <div className="w-80">
-          <form onSubmit={onScanSubmit} className="flex">
-            <input ref={scanRef} value={scan} onChange={(e) => setScan(e.target.value)} placeholder="Escanear código o ingresar ID y presionar Enter" className="border px-3 py-2 flex-1" />
-            <Button type="submit" className="ml-2">Buscar/Marcar</Button>
-          </form>
+        <div>
+          <h1 className="text-2xl font-semibold">Recepción de Pedidos - Almacén</h1>
+          {/**
+           * Esta pantalla muestra los pedidos realizados a proveedores. Usa los endpoints del backend para obtener la lista
+           * de pedidos, productos y proveedores. Las acciones disponibles son:
+           * - Aprobar pedido: actualiza el estado a 'aprobado' en el servidor.
+           * - Marcar recibido: marca el pedido como recibido y actualiza el inventario central (`inventario_almacen`).
+           * - Rechazar/eliminar pedido: borra el registro del pedido.
+           */}
         </div>
       </div>
 
       <div className="bg-white rounded-lg shadow-soft p-4 border">
+        {loading && (<div className="mb-4 text-sm text-gray-600">Cargando datos...</div>)}
+        {error && (
+          <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded">
+            <div className="font-medium">Error cargando datos</div>
+            <div className="text-sm mt-1">{error}</div>
+            <div className="mt-2">
+              <Button onClick={() => load()} className="px-3 py-1" size="sm">Reintentar</Button>
+            </div>
+          </div>
+        )}
         <table className="w-full table-auto">
           <thead>
             <tr className="text-left text-sm text-gray-600"><th className="px-3 py-2">ID</th><th className="px-3 py-2">Producto</th><th className="px-3 py-2">Proveedor</th><th className="px-3 py-2">Cantidad</th><th className="px-3 py-2">Estado</th><th className="px-3 py-2">Acciones</th></tr>
@@ -122,9 +148,9 @@ export default function RecepcionPedidos() {
                 <td className="px-3 py-2 text-sm">{pd.estado ?? '-'}</td>
                 <td className="px-3 py-2 text-sm">
                   <div className="flex space-x-2">
-                    <Button type="button" onClick={() => aprobarPedido(pd.id)} className="px-2 py-1" size="sm">Aprobar</Button>
-                    <Button type="button" onClick={() => marcarRecepcion(pd.id)} className="px-2 py-1" size="sm">Marcar recibido</Button>
-                    <Button type="button" onClick={() => rechazarPedido(pd.id)} className="px-2 py-1" size="sm">Rechazar</Button>
+                    <Button type="button" onClick={() => aprobarPedido(pd.id)} className="px-2 py-1" size="sm" disabled={processingId === pd.id}>Aprobar</Button>
+                    <Button type="button" onClick={() => marcarRecepcion(pd.id)} className="px-2 py-1" size="sm" disabled={processingId === pd.id}>Marcar recibido</Button>
+                    <Button type="button" onClick={() => rechazarPedido(pd.id)} className="px-2 py-1" size="sm" disabled={processingId === pd.id}>Rechazar</Button>
                   </div>
                 </td>
               </tr>
