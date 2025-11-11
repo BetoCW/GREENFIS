@@ -4,7 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import Button from '../../components/Button';
 import FormField from '../../components/FormField';
-import { fetchSucursales, createProduct } from '../../utils/api';
+import { fetchSucursales, createProduct, fetchProveedores, fetchCategorias } from '../../utils/api';
 
 const ProductRegistration: React.FC = () => {
   const navigate = useNavigate();
@@ -13,29 +13,64 @@ const ProductRegistration: React.FC = () => {
     descripcion: '',
     cantidad: '',
     precio: '',
-    ubicacion: '' // will store sucursal id as string
+    ubicacion: '', // sucursal id as string
+    categoria_id: '',
+    proveedor_id: '',
+    codigo_barras: ''
   });
   const [sucursales, setSucursales] = useState<Array<{ id: number; nombre: string }>>([]);
+  const [categorias, setCategorias] = useState<Array<{ id: number; nombre: string }>>([]);
+  const [proveedores, setProveedores] = useState<Array<{ id: number | string; nombre: string }>>([]);
 
   useEffect(() => {
     const load = async () => {
       const res = await fetchSucursales();
-      if (res.ok) setSucursales(res.data || []);
-      else setSucursales([]);
+      if (res.ok) setSucursales(res.data || []); else setSucursales([]);
+
+      // Cargar proveedores desde manager (ruta existente)
+      try {
+        const prov = await fetchProveedores();
+        const list = Array.isArray(prov?.data) ? prov.data : [];
+        setProveedores(list.map((p: any) => ({ id: Number(p.id ?? p.id_proveedor ?? p.ID), nombre: p.nombre }))); 
+      } catch {
+        setProveedores([]);
+      }
+
+      // Cargar categorías reales desde la API
+      try {
+        const catRes = await fetchCategorias();
+        const list = Array.isArray(catRes?.data) ? catRes.data : [];
+        const mapped = list.map((c: any) => ({ id: Number(c.id), nombre: c.nombre }));
+        setCategorias(mapped);
+      } catch {
+        setCategorias([]);
+      }
     };
     load();
   }, []);
+
+  // Generar EAN-13 que comience con prefijo local 750 (MX) similar a tus ejemplos
+  function generarEAN13(): string {
+    // 12 dígitos base (sin dígito verificador). Prefijo 750 + 9 aleatorios
+    const base = '750' + Array.from({ length: 9 }, () => Math.floor(Math.random() * 10)).join('');
+    const digits = base.split('').map(d => parseInt(d, 10));
+    // Cálculo del dígito verificador EAN-13: sum(odd) + 3*sum(even) mod 10
+    // Considerando posiciones 1..12 (desde la izquierda). El dígito 13 es el check.
+    const sum = digits.reduce((acc, d, i) => acc + d * ((i % 2 === 0) ? 1 : 3), 0);
+    const check = (10 - (sum % 10)) % 10;
+    return base + String(check);
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     // Prepare payload aligning with manager.post('/productos') expected fields
     const payload = {
-      codigo_barras: '',
+      codigo_barras: formData.codigo_barras || generarEAN13(),
       nombre: formData.nombre,
       descripcion: formData.descripcion,
       precio: parseFloat(formData.precio || '0') || 0,
-      categoria_id: null,
-      proveedor_id: null,
+      categoria_id: formData.categoria_id ? parseInt(formData.categoria_id, 10) : null,
+      proveedor_id: formData.proveedor_id ? parseInt(formData.proveedor_id, 10) : null,
       stock_minimo: parseInt(formData.cantidad || '0') || 0,
       creado_por: 1
     };
@@ -88,6 +123,23 @@ const ProductRegistration: React.FC = () => {
               required
             />
 
+            {/* Código de barras */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="md:col-span-2">
+                <FormField
+                  label="Código de Barras"
+                  value={formData.codigo_barras}
+                  onChange={(value) => setFormData({ ...formData, codigo_barras: value })}
+                  placeholder="Ej. 75010... (EAN-13)"
+                />
+              </div>
+              <div className="flex items-end">
+                <Button type="button" onClick={() => setFormData(f => ({ ...f, codigo_barras: generarEAN13() }))}>
+                  Generar
+                </Button>
+              </div>
+            </div>
+
             <div className="mb-4">
               <label className="block text-sm font-bold text-text-dark mb-2">
                 Descripción <span className="text-accent ml-1">*</span>
@@ -110,6 +162,41 @@ const ProductRegistration: React.FC = () => {
               placeholder="0"
               required
             />
+            {/* Categoría y Proveedor */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-bold text-text-dark mb-2">
+                  Categoría <span className="text-accent ml-1">*</span>
+                </label>
+                <select
+                  value={formData.categoria_id}
+                  onChange={(e) => setFormData({ ...formData, categoria_id: e.target.value })}
+                  required
+                  className="w-full px-3 py-2 border border-gray-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-green-primary"
+                >
+                  <option value="">Seleccione una categoría</option>
+                  {categorias.map(c => (
+                    <option key={c.id} value={String(c.id)}>{c.nombre}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-text-dark mb-2">
+                  Proveedor <span className="text-accent ml-1">*</span>
+                </label>
+                <select
+                  value={formData.proveedor_id}
+                  onChange={(e) => setFormData({ ...formData, proveedor_id: e.target.value })}
+                  required
+                  className="w-full px-3 py-2 border border-gray-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-green-primary"
+                >
+                  <option value="">Seleccione un proveedor</option>
+                  {proveedores.map(p => (
+                    <option key={String(p.id)} value={String(p.id)}>{p.nombre}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
 
             <FormField
               label="Precio"

@@ -45,13 +45,10 @@ const Promotions: React.FC = () => {
   // Load product list for selecting by name (so manager can pick product by name instead of typing ID)
   useEffect(() => {
     const loadProducts = async () => {
-      try {
-        const list = await fetchProducts();
-        // fetchProducts returns an array of products (fallbacks to localStore if API fails)
-        setProducts(Array.isArray(list) ? list : []);
-      } catch (err) {
-        console.error('Error loading products', err);
-      }
+      // fetchProducts() ya maneja fallback a localStore en caso de error; aquí evitamos loguear
+      // para no ensuciar la consola si el endpoint por algún motivo responde 500 de forma transitoria.
+      const list = await fetchProducts().catch(() => []);
+      setProducts(Array.isArray(list) ? list : []);
     };
     loadProducts();
   }, []);

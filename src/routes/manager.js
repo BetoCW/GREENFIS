@@ -198,6 +198,25 @@ router.delete('/proveedores/:id/hard', async (req, res) => {
   }
 });
 
+// ---------- Categorías ----------
+// Devuelve las categorías activas para poblar selects en el frontend
+router.get('/categorias', async (req, res) => {
+  try {
+    const pool = await poolPromise;
+    // Trae columnas principales; si no existe la columna activo en algún entorno, hace fallback simple
+    try {
+      const result = await pool.request().query('SELECT id, nombre, descripcion, activo, fecha_creacion FROM categorias WHERE activo = 1');
+      return res.json(result.recordset);
+    } catch (qErr) {
+      console.warn('GET /manager/categorias primary query failed:', qErr && qErr.message);
+      const fb = await pool.request().query('SELECT id, nombre FROM categorias');
+      return res.json(fb.recordset);
+    }
+  } catch (err) {
+    return res.status(500).json({ error: err?.message || String(err) });
+  }
+});
+
 // ---------- Productos ----------
 router.get('/productos', async (req, res) => {
   try { const pool = await poolPromise; const result = await pool.request().query('SELECT * FROM productos'); res.json(result.recordset); } catch (err) { res.status(500).json({ error: err.message }); }

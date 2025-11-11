@@ -183,6 +183,18 @@ export async function fetchPromociones() {
   }
 }
 
+// ---------- Categorías ----------
+export async function fetchCategorias() {
+  try {
+    const res = await fetch(`${BASE}/api/manager/categorias`);
+    if (!res.ok) throw new Error('API error');
+    const data = await res.json();
+    return { ok: true, data };
+  } catch (e) {
+    return { ok: false, data: [] as any[] };
+  }
+}
+
 // ---------- Proveedores ----------
 export async function fetchProveedores() {
   try {
