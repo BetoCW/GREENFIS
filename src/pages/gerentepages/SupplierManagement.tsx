@@ -13,6 +13,7 @@ interface Supplier {
   telefono?: string;
   correo?: string;
   direccion?: string;
+  descripcion?: string;
   activo?: number;
 }
 
@@ -43,6 +44,7 @@ const SupplierManagement: React.FC = () => {
         telefono: r.telefono ?? r.TELEFONO ?? r.telefono ?? '',
         correo: r.correo ?? r.CORREO ?? r.correo ?? '',
         direccion: r.direccion ?? r.DIRECCION ?? r.direccion ?? '',
+        descripcion: r.descripcion ?? r.DESCRIPCION ?? '',
         activo: typeof r.activo !== 'undefined' ? Number(r.activo) : 1
       }));
       setSuppliers(mapped);
@@ -74,7 +76,7 @@ const SupplierManagement: React.FC = () => {
         const payload = { ...editingItem };
         const res = await createProveedor(payload);
         const created = res.data ?? null;
-        const toAdd: Supplier = { id: String(created?.id ?? created?.ID ?? created?.id_proveedor ?? editingItem.id ?? `PV-${Date.now()}`), nombre: created?.nombre ?? editingItem.nombre ?? '', contacto: created?.contacto ?? editingItem.contacto, telefono: created?.telefono ?? editingItem.telefono, correo: created?.correo ?? editingItem.correo, direccion: created?.direccion ?? editingItem.direccion, activo: created?.activo ?? 1 };
+        const toAdd: Supplier = { id: String(created?.id ?? created?.ID ?? created?.id_proveedor ?? editingItem.id ?? `PV-${Date.now()}`), nombre: created?.nombre ?? editingItem.nombre ?? '', contacto: created?.contacto ?? editingItem.contacto, telefono: created?.telefono ?? editingItem.telefono, correo: created?.correo ?? editingItem.correo, direccion: created?.direccion ?? editingItem.direccion, descripcion: created?.descripcion ?? editingItem.descripcion, activo: created?.activo ?? 1 };
         const next = [toAdd, ...suppliers];
         setSuppliers(next);
         setEditing(false);
@@ -82,7 +84,7 @@ const SupplierManagement: React.FC = () => {
         return;
       } else {
         const id = editingItem.id;
-        const payload = { nombre: editingItem.nombre, contacto: editingItem.contacto, telefono: editingItem.telefono, correo: editingItem.correo, direccion: editingItem.direccion, activo: editingItem.activo ?? 1 };
+        const payload = { nombre: editingItem.nombre, contacto: editingItem.contacto, telefono: editingItem.telefono, correo: editingItem.correo, direccion: editingItem.direccion, descripcion: editingItem.descripcion, activo: editingItem.activo ?? 1 };
   await updateProveedor(id, payload);
         // even if res.ok is false, the helper already applied fallback; update UI optimistically
         const next = suppliers.map(s => (s.id === id ? { ...s, ...payload } : s));
@@ -113,11 +115,12 @@ const SupplierManagement: React.FC = () => {
 
   const columns = [
     { key: 'id', header: 'ID' },
-    { key: 'nombre', header: 'Nombre' },
+    { key: 'nombre', header: 'Empresa' },
     { key: 'contacto', header: 'Contacto' },
     { key: 'telefono', header: 'Teléfono', render: (v: any) => (<span className="flex items-center space-x-2"><Phone size={14} /> <span>{v}</span></span>) },
     { key: 'correo', header: 'Correo', render: (v: any) => (<span className="flex items-center space-x-2"><Mail size={14} /> <span>{v}</span></span>) },
     { key: 'direccion', header: 'Dirección' },
+    { key: 'descripcion', header: 'Descripción' },
     { key: 'actions', header: 'Acciones', render: (_: any, row: Supplier) => (
       <div className="flex space-x-2">
         <button className="p-1 text-green-primary hover:bg-green-light rounded" onClick={() => { setEditingItem(row); setEditing(true); }}><Edit size={16} /></button>
@@ -132,7 +135,7 @@ const SupplierManagement: React.FC = () => {
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-3xl font-bold text-text-dark">Gestión de Proveedores</h1>
           <div className="flex items-center space-x-3">
-            <Button onClick={() => { setEditingItem({ id: '', nombre: '', contacto: '', telefono: '', correo: '', direccion: '', activo: 1 }); setEditing(true); }}>
+            <Button onClick={() => { setEditingItem({ id: '', nombre: '', contacto: '', telefono: '', correo: '', direccion: '', descripcion: '', activo: 1 }); setEditing(true); }}>
               <Plus size={16} className="mr-2" /> Nuevo Proveedor
             </Button>
           </div>
@@ -166,6 +169,10 @@ const SupplierManagement: React.FC = () => {
               <div className="md:col-span-2">
                 <label className="block text-sm font-bold text-text-dark mb-2">Dirección</label>
                 <textarea className="w-full px-3 py-2 border border-gray-medium rounded-lg" value={editingItem.direccion || ''} onChange={(e) => setEditingItem({ ...editingItem, direccion: e.target.value } as Supplier)} />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-sm font-bold text-text-dark mb-2">Descripción</label>
+                <textarea className="w-full px-3 py-2 border border-gray-medium rounded-lg" value={editingItem.descripcion || ''} onChange={(e) => setEditingItem({ ...editingItem, descripcion: e.target.value } as Supplier)} />
               </div>
             </div>
 

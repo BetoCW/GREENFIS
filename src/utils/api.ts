@@ -1,4 +1,4 @@
-import { readStore, writeStore } from './localStore';
+import { readStore } from './localStore';
 
 const BASE = 'http://localhost:4000';
 const DEFAULT_SUCURSAL = 1;

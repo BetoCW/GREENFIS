@@ -142,7 +142,7 @@ router.get('/proveedores', async (req, res) => {
 
 router.post('/proveedores', async (req, res) => {
   try {
-    const { nombre, contacto, telefono, correo, direccion, creado_por } = req.body;
+    const { nombre, contacto, telefono, correo, direccion, descripcion, creado_por } = req.body;
     const pool = await poolPromise;
     const result = await pool.request()
       .input('nombre', nombre)
@@ -150,8 +150,9 @@ router.post('/proveedores', async (req, res) => {
       .input('telefono', telefono)
       .input('correo', correo)
       .input('direccion', direccion)
+      .input('descripcion', descripcion)
       .input('creado_por', creado_por)
-      .query('INSERT INTO proveedores (nombre, contacto, telefono, correo, direccion, creado_por) OUTPUT INSERTED.* VALUES (@nombre,@contacto,@telefono,@correo,@direccion,@creado_por)');
+      .query('INSERT INTO proveedores (nombre, contacto, telefono, correo, direccion, descripcion, creado_por) OUTPUT INSERTED.* VALUES (@nombre,@contacto,@telefono,@correo,@direccion,@descripcion,@creado_por)');
     res.status(201).json(result.recordset[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -159,7 +160,7 @@ router.post('/proveedores', async (req, res) => {
 router.put('/proveedores/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { nombre, contacto, telefono, correo, direccion, activo } = req.body;
+    const { nombre, contacto, telefono, correo, direccion, descripcion, activo } = req.body;
     const pool = await poolPromise;
     await pool.request()
       .input('id', id)
@@ -168,8 +169,9 @@ router.put('/proveedores/:id', async (req, res) => {
       .input('telefono', telefono)
       .input('correo', correo)
       .input('direccion', direccion)
+      .input('descripcion', descripcion)
       .input('activo', activo)
-      .query('UPDATE proveedores SET nombre=@nombre, contacto=@contacto, telefono=@telefono, correo=@correo, direccion=@direccion, activo=@activo WHERE id=@id');
+      .query('UPDATE proveedores SET nombre=@nombre, contacto=@contacto, telefono=@telefono, correo=@correo, direccion=@direccion, descripcion=@descripcion, activo=@activo WHERE id=@id');
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
