@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Edit, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { faker } from '@faker-js/faker';
+import { readStore, seedIfEmpty } from '../../utils/localStore';
 import Button from '../../components/Button';
 import Table from '../../components/Table';
-import { updateProduct, deleteProduct } from '../../utils/api';
+import { updateProduct, deleteProduct, fetchInventoryVW, fetchSucursales, fetchInventoryWithStatus } from '../../utils/api';
 
 interface Product {
   id: string;
@@ -22,54 +22,60 @@ const InventoryManagement: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<boolean>(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [sucursales, setSucursales] = useState<Array<{ id: number; nombre: string }>>([]);
+  const [selectedSucursal, setSelectedSucursal] = useState<string>('');
 
   useEffect(() => {
-    // Fetch data from the DB view vw_gestion_inventario
     async function load() {
       setIsLoading(true);
       setError(null);
       try {
-        const res = await fetch('http://localhost:4000/api/almacen/inventario/vw');
-        if (!res.ok) throw new Error(`Server ${res.status}`);
-        const data = await res.json();
-        // map view columns to Product shape
-        const mapped: Product[] = (Array.isArray(data) ? data : []).map((r: any, i: number) => {
-          // Prefer real numeric product id fields coming from the view/backend
-          const rawId = r.producto_id ?? r.productoId ?? r.id ?? r.ID;
-          const numericId = rawId != null && !Number.isNaN(Number(rawId)) ? String(Number(rawId)) : null;
-          const defaultId = `PRD-${(i + 1).toString().padStart(3, '0')}`;
-          const idStr = numericId ?? String(r.ID ?? r.id ?? defaultId);
-
-          return {
-            id: idStr,
-            nombre: r.NOMBRE ?? r.nombre ?? r.producto ?? `Producto ${i + 1}`,
-            descripcion: r.DESCRIPCION ?? r.descripcion ?? '',
-            cantidad: Number(r.CANTIDAD ?? r.cantidad ?? 0),
-            precio: Number(String(r.PRECIO ?? r.precio ?? '').replace(/[^0-9.-]+/g, '')) || 0,
-            ubicacion: r.UBICACION ?? r.ubicacion ?? 'Sin ubicación'
-          } as Product;
-        });
+        seedIfEmpty();
+        const res = selectedSucursal
+          ? await fetchInventoryWithStatus(Number(selectedSucursal))
+          : await fetchInventoryVW();
+        if (!res.ok) throw new Error('Inventario no disponible');
+        const mapped: Product[] = res.data.map((r: any) => ({
+          id: String(r.id),
+          nombre: r.nombre,
+          descripcion: r.descripcion,
+          cantidad: Number(r.cantidad || 0),
+          precio: Number(r.precio || 0),
+          ubicacion: r.ubicacion || 'Sin ubicación'
+        }));
         setProducts(mapped);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        console.warn('Failed to load vw_gestion_inventario:', msg);
+        console.warn('Fallback inventario gerente:', msg);
         setError(msg);
-        // fallback to local mock data to keep UI usable
-        const ubicaciones = ['Almacén A', 'Almacén B', 'Sucursal Centro', 'Sucursal Norte'];
-        const mockProducts: Product[] = Array.from({ length: 15 }, (_, i) => ({
-          id: `PRD-${(i + 1).toString().padStart(3, '0')}`,
-          nombre: faker.commerce.productName(),
-          descripcion: faker.commerce.productDescription(),
-          cantidad: faker.number.int({ min: 0, max: 100 }),
-          precio: parseFloat(faker.commerce.price({ min: 10, max: 500 })),
-          ubicacion: faker.helpers.arrayElement(ubicaciones)
-        }));
-        setProducts(mockProducts);
+        const local = readStore<Product[]>('gf_products', []);
+        setProducts(local.map(p => ({
+          id: String(p.id),
+          nombre: p.nombre,
+          descripcion: p.descripcion || '',
+          cantidad: Number(p.cantidad || 0),
+          precio: Number(p.precio || 0),
+          ubicacion: p.ubicacion || 'Local'
+        })));
       } finally {
         setIsLoading(false);
       }
     }
     load();
+  }, [selectedSucursal]);
+
+  useEffect(() => {
+    // cargar sucursales para el combo
+    async function loadSuc() {
+      try {
+        const res = await fetchSucursales();
+        if (res.ok) setSucursales(res.data || []);
+        else setSucursales([]);
+      } catch {
+        setSucursales([]);
+      }
+    }
+    loadSuc();
   }, []);
 
   const handleDeleteProduct = async (id: string) => {
@@ -185,12 +191,27 @@ const InventoryManagement: React.FC = () => {
       >
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-3xl font-bold text-text-dark">Gestión de Inventario</h1>
-          <Link to="/registro-producto">
-            <Button>
-              <Plus size={16} className="mr-2" />
-              Registrar Producto
-            </Button>
-          </Link>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-700">Sucursal</label>
+              <select
+                value={selectedSucursal}
+                onChange={(e) => setSelectedSucursal(e.target.value)}
+                className="border rounded px-3 py-2"
+              >
+                <option value="">Todas</option>
+                {sucursales.map(s => (
+                  <option key={s.id} value={String(s.id)}>{s.nombre}</option>
+                ))}
+              </select>
+            </div>
+            <Link to="/registro-producto">
+              <Button>
+                <Plus size={16} className="mr-2" />
+                Registrar Producto
+              </Button>
+            </Link>
+          </div>
         </div>
 
         <div className="bg-white rounded-lg shadow-soft p-6 border border-gray-medium">

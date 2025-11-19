@@ -4,7 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import Button from '../../components/Button';
 import FormField from '../../components/FormField';
-import { fetchSucursales, createProduct, fetchProveedores, fetchCategorias } from '../../utils/api';
+import { createProduct, fetchProveedores, fetchCategorias, existsProductoByCodigo } from '../../utils/api';
 
 const ProductRegistration: React.FC = () => {
   const navigate = useNavigate();
@@ -13,20 +13,17 @@ const ProductRegistration: React.FC = () => {
     descripcion: '',
     cantidad: '',
     precio: '',
-    ubicacion: '', // sucursal id as string
     categoria_id: '',
     proveedor_id: '',
     codigo_barras: ''
   });
-  const [sucursales, setSucursales] = useState<Array<{ id: number; nombre: string }>>([]);
   const [categorias, setCategorias] = useState<Array<{ id: number; nombre: string }>>([]);
   const [proveedores, setProveedores] = useState<Array<{ id: number | string; nombre: string }>>([]);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     const load = async () => {
-      const res = await fetchSucursales();
-      if (res.ok) setSucursales(res.data || []); else setSucursales([]);
-
       // Cargar proveedores desde manager (ruta existente)
       try {
         const prov = await fetchProveedores();
@@ -63,26 +60,79 @@ const ProductRegistration: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Prepare payload aligning with manager.post('/productos') expected fields
+    // Validaciones de formulario según el esquema
+    const nextErrors: Record<string, string> = {};
+    const nombre = String(formData.nombre || '').trim();
+    if (!nombre) nextErrors.nombre = 'El nombre es obligatorio';
+
+    const precio = parseFloat(formData.precio || '');
+    if (Number.isNaN(precio)) nextErrors.precio = 'Precio inválido';
+    else if (precio < 0) nextErrors.precio = 'El precio debe ser >= 0';
+
+    const categoriaId = formData.categoria_id ? parseInt(formData.categoria_id, 10) : NaN;
+    if (Number.isNaN(categoriaId)) nextErrors.categoria_id = 'Seleccione una categoría';
+
+    const proveedorId = formData.proveedor_id ? parseInt(formData.proveedor_id, 10) : NaN;
+    if (Number.isNaN(proveedorId)) nextErrors.proveedor_id = 'Seleccione un proveedor';
+
+    const stockMin = formData.cantidad ? parseInt(formData.cantidad, 10) : 0;
+    if (Number.isNaN(stockMin) || stockMin < 0) nextErrors.cantidad = 'Cantidad mínima inválida';
+
+    const cb = String(formData.codigo_barras || '').trim();
+    if (cb) {
+      if (!/^\d{13}$/.test(cb)) nextErrors.codigo_barras = 'Código debe tener 13 dígitos (EAN-13)';
+      else if (!isValidEAN13(cb)) nextErrors.codigo_barras = 'Dígito verificador EAN-13 inválido';
+    }
+
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+
+    // Pre-chequeo de unicidad de código de barras
+    if (cb) {
+      try {
+        const exists = await existsProductoByCodigo(cb);
+        if (exists) {
+          setErrors(prev => ({ ...prev, codigo_barras: 'Este código de barras ya existe' }));
+          return;
+        }
+      } catch {}
+    }
+
+    setSubmitting(true);
+    // Prepare payload según la tabla productos
     const payload = {
-      codigo_barras: formData.codigo_barras || generarEAN13(),
-      nombre: formData.nombre,
+      codigo_barras: cb || generarEAN13(),
+      nombre,
       descripcion: formData.descripcion,
-      precio: parseFloat(formData.precio || '0') || 0,
-      categoria_id: formData.categoria_id ? parseInt(formData.categoria_id, 10) : null,
-      proveedor_id: formData.proveedor_id ? parseInt(formData.proveedor_id, 10) : null,
-      stock_minimo: parseInt(formData.cantidad || '0') || 0,
+      precio: Number(precio) || 0,
+      categoria_id: Number(categoriaId),
+      proveedor_id: Number(proveedorId),
+      stock_minimo: Number(stockMin) || 0,
       creado_por: 1
     };
 
-    const res = await createProduct(payload);
-    if (res.ok) {
-      alert('Producto registrado exitosamente');
-      navigate('/gestionar-inventario');
-    } else {
-      alert('Error al registrar producto: ' + (res.error || 'error desconocido'));
+    try {
+      const res = await createProduct(payload);
+      if (res.ok) {
+        alert('Producto registrado exitosamente');
+        navigate('/gestionar-inventario');
+      } else {
+        const msg = typeof res.error === 'string' ? res.error : (res.error?.message || 'error desconocido');
+        alert('Error al registrar producto: ' + msg);
+      }
+    } finally {
+      setSubmitting(false);
     }
   };
+
+  function isValidEAN13(code: string): boolean {
+    if (!/^\d{13}$/.test(code)) return false;
+    const digits = code.split('').map(d => parseInt(d, 10));
+    const check = digits[12];
+    const sum = digits.slice(0,12).reduce((acc, d, i) => acc + d * (i % 2 === 0 ? 1 : 3), 0);
+    const calc = (10 - (sum % 10)) % 10;
+    return calc === check;
+  }
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -122,6 +172,7 @@ const ProductRegistration: React.FC = () => {
               placeholder="Ingrese el nombre del producto"
               required
             />
+            {errors.nombre && <div className="text-red-600 text-sm mt-1">{errors.nombre}</div>}
 
             {/* Código de barras */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -132,6 +183,7 @@ const ProductRegistration: React.FC = () => {
                   onChange={(value) => setFormData({ ...formData, codigo_barras: value })}
                   placeholder="Ej. 75010... (EAN-13)"
                 />
+                {errors.codigo_barras && <div className="text-red-600 text-sm mt-1">{errors.codigo_barras}</div>}
               </div>
               <div className="flex items-end">
                 <Button type="button" onClick={() => setFormData(f => ({ ...f, codigo_barras: generarEAN13() }))}>
@@ -155,13 +207,14 @@ const ProductRegistration: React.FC = () => {
             </div>
 
             <FormField
-              label="Cantidad"
+              label="Cantidad mínima (stock)"
               type="number"
               value={formData.cantidad}
               onChange={(value) => setFormData({...formData, cantidad: value})}
               placeholder="0"
               required
             />
+            {errors.cantidad && <div className="text-red-600 text-sm mt-1">{errors.cantidad}</div>}
             {/* Categoría y Proveedor */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
@@ -179,6 +232,7 @@ const ProductRegistration: React.FC = () => {
                     <option key={c.id} value={String(c.id)}>{c.nombre}</option>
                   ))}
                 </select>
+                {errors.categoria_id && <div className="text-red-600 text-sm mt-1">{errors.categoria_id}</div>}
               </div>
               <div>
                 <label className="block text-sm font-bold text-text-dark mb-2">
@@ -195,6 +249,7 @@ const ProductRegistration: React.FC = () => {
                     <option key={String(p.id)} value={String(p.id)}>{p.nombre}</option>
                   ))}
                 </select>
+                {errors.proveedor_id && <div className="text-red-600 text-sm mt-1">{errors.proveedor_id}</div>}
               </div>
             </div>
 
@@ -206,27 +261,8 @@ const ProductRegistration: React.FC = () => {
               placeholder="0.00"
               required
             />
+            {errors.precio && <div className="text-red-600 text-sm mt-1">{errors.precio}</div>}
 
-            <div className="mb-4">
-              <label className="block text-sm font-bold text-text-dark mb-2">
-                Ubicación <span className="text-accent ml-1">*</span>
-              </label>
-              <select
-                value={formData.ubicacion}
-                onChange={(e) => setFormData({...formData, ubicacion: e.target.value})}
-                required
-                className="w-full px-3 py-2 border border-gray-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-green-primary focus:border-transparent transition-colors"
-              >
-                <option value="">Seleccione una ubicación</option>
-                {sucursales.length === 0 ? (
-                  <option value="">No hay sucursales registradas</option>
-                ) : (
-                  sucursales.map(s => (
-                    <option key={s.id} value={String(s.id)}>{s.nombre}</option>
-                  ))
-                )}
-              </select>
-            </div>
 
             <div className="flex space-x-4 pt-4">
               <Link to="/gestionar-inventario" className="flex-1">
@@ -234,7 +270,7 @@ const ProductRegistration: React.FC = () => {
                   Volver
                 </Button>
               </Link>
-              <Button type="submit" className="flex-1">
+              <Button type="submit" className="flex-1" disabled={submitting}>
                 Guardar Producto
               </Button>
             </div>

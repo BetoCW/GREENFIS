@@ -36,16 +36,21 @@ const SupplierManagement: React.FC = () => {
     setError(null);
     try {
       const res = await fetchProveedores();
+      if (!res.ok) {
+        setError(typeof res.error === 'string' ? res.error : 'Error cargando proveedores');
+        setSuppliers([]);
+        return;
+      }
       const data = res.data ?? [];
       const mapped: Supplier[] = (Array.isArray(data) ? data : []).map((r: any) => ({
-        id: String(r.id ?? r.id_proveedor ?? r.ID ?? r.id ?? `PV-${Date.now()}`),
-        nombre: r.nombre ?? r.NOMBRE ?? '',
-        contacto: r.contacto ?? r.CONTACTO ?? r.contacto ?? '',
-        telefono: r.telefono ?? r.TELEFONO ?? r.telefono ?? '',
-        correo: r.correo ?? r.CORREO ?? r.correo ?? '',
-        direccion: r.direccion ?? r.DIRECCION ?? r.direccion ?? '',
-        descripcion: r.descripcion ?? r.DESCRIPCION ?? '',
-        activo: typeof r.activo !== 'undefined' ? Number(r.activo) : 1
+        id: String(r.id),
+        nombre: r.nombre || '',
+        contacto: r.contacto || '',
+        telefono: r.telefono || '',
+        correo: r.correo || '',
+        direccion: r.direccion || '',
+        descripcion: '',
+        activo: r.activo ? 1 : 0
       }));
       setSuppliers(mapped);
     } catch (e) {
@@ -75,23 +80,21 @@ const SupplierManagement: React.FC = () => {
       if (isNew) {
         const payload = { ...editingItem };
         const res = await createProveedor(payload);
-        const created = res.data ?? null;
-        const toAdd: Supplier = { id: String(created?.id ?? created?.ID ?? created?.id_proveedor ?? editingItem.id ?? `PV-${Date.now()}`), nombre: created?.nombre ?? editingItem.nombre ?? '', contacto: created?.contacto ?? editingItem.contacto, telefono: created?.telefono ?? editingItem.telefono, correo: created?.correo ?? editingItem.correo, direccion: created?.direccion ?? editingItem.direccion, descripcion: created?.descripcion ?? editingItem.descripcion, activo: created?.activo ?? 1 };
-        const next = [toAdd, ...suppliers];
-        setSuppliers(next);
+        if (!res.ok) return alert('Error creando proveedor: ' + (res.error?.message || res.error));
+        const createdArr = Array.isArray(res.data) ? res.data : [res.data];
+        const created = createdArr[0];
+        const toAdd: Supplier = { id: String(created.id), nombre: created.nombre || editingItem.nombre || '', contacto: created.contacto || '', telefono: created.telefono || '', correo: created.correo || '', direccion: created.direccion || '', descripcion: '', activo: created.activo ? 1 : 0 };
+        setSuppliers(prev => [toAdd, ...prev]);
         setEditing(false);
         setEditingItem(null);
-        return;
       } else {
         const id = editingItem.id;
-        const payload = { nombre: editingItem.nombre, contacto: editingItem.contacto, telefono: editingItem.telefono, correo: editingItem.correo, direccion: editingItem.direccion, descripcion: editingItem.descripcion, activo: editingItem.activo ?? 1 };
-  await updateProveedor(id, payload);
-        // even if res.ok is false, the helper already applied fallback; update UI optimistically
-        const next = suppliers.map(s => (s.id === id ? { ...s, ...payload } : s));
-        setSuppliers(next);
+        const payload = { nombre: editingItem.nombre, contacto: editingItem.contacto, telefono: editingItem.telefono, correo: editingItem.correo, direccion: editingItem.direccion, activo: editingItem.activo ?? 1 };
+        const res = await updateProveedor(id, payload);
+        if (!res.ok) return alert('Error actualizando proveedor: ' + (res.error?.message || res.error));
+        setSuppliers(prev => prev.map(s => (s.id === id ? { ...s, ...payload } : s)));
         setEditing(false);
         setEditingItem(null);
-        return;
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -102,11 +105,9 @@ const SupplierManagement: React.FC = () => {
   async function handleDelete(id: string) {
     if (!confirm('¿Está seguro de eliminar este proveedor?')) return;
     try {
-  await deleteProveedorHard(id);
-      // update UI regardless of res.ok (helper handles fallback)
-      const next = suppliers.filter(s => s.id !== id);
-      setSuppliers(next);
-      return;
+      const res = await deleteProveedorHard(id);
+      if (!res.ok) return alert('Error eliminando: ' + (res.error?.message || res.error));
+      setSuppliers(prev => prev.filter(s => s.id !== id));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       alert('Error al eliminar: ' + msg);
@@ -148,7 +149,7 @@ const SupplierManagement: React.FC = () => {
 
           {error && (<div className="mb-4 p-3 rounded border border-yellow-300 bg-yellow-50 text-sm text-yellow-800">{error}</div>)}
 
-          {loading ? (<div className="py-8 text-center text-gray-600">Cargando proveedores...</div>) : (<Table columns={columns} data={suppliers} />)}
+          {loading ? (<div className="py-8 text-center text-gray-600">Cargando proveedores...</div>) : suppliers.length === 0 ? (<div className="py-6 text-sm text-gray-600">No hay proveedores registrados</div>) : (<Table columns={columns} data={suppliers} />)}
         </div>
       </motion.div>
 
