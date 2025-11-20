@@ -1,17 +1,19 @@
 import { useEffect, useState } from 'react';
+import { motion } from 'framer-motion';
 import Button from '../../components/Button';
 import { useAuth } from '../../context/AuthContext';
-
-const API = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:4000';
+import { fetchInventarioAlmacen, adjustInventarioAlmacen, deleteInventarioAlmacenProducto, purgeExpiredInventarioAlmacen, fetchSucursales } from '../../utils/api';
 
 export default function InventarioAlmacen() {
   const [items, setItems] = useState<any[]>([]);
   const [filtered, setFiltered] = useState<any[]>([]);
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<'all'|'agotado'|'bajo'|'normal'>('all');
+  const [filter, setFilter] = useState<'all'|'agotado'|'bajo'|'normal'|'caducado'>('all');
   const [loading, setLoading] = useState(false);
-  const [editing, setEditing] = useState<any | null>(null); // { id, cantidad, ubicacion }
+  const [editing, setEditing] = useState<any | null>(null);
   const [sucursales, setSucursales] = useState<any[]>([]);
+  const [expiredBanner, setExpiredBanner] = useState(true);
+  const [purging, setPurging] = useState(false);
   const { user } = useAuth();
 
   // sanitize ubicacion text to collapse duplicated adjacent words
@@ -27,26 +29,24 @@ export default function InventarioAlmacen() {
   async function load() {
     setLoading(true);
     try {
-      const res = await fetch(`${API}/api/almacen/inventario/vw`);
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      // normalize to lowercase keys used below
-  const mapped = data.map((r: any) => ({
-        // coerce product id to number when possible to avoid identifier conflicts
-        id: Number(r.producto_id ?? r.producto_id_real ?? r.id),
-        codigo: String(r.ID ?? r.id ?? (r.producto_id ?? r.producto_id_real ?? '')),
-        nombre: r.NOMBRE ?? r.nombre ?? r.producto ?? '',
-        descripcion: r.DESCRIPCION ?? r.descripcion ?? '',
-        cantidad: Number(r.CANTIDAD ?? r.cantidad ?? 0),
-        ubicacion: sanitizeUbicacion(r.UBICACION ?? r.ubicacion ?? ''),
-        stock_minimo: Number(r.stock_minimo ?? r.STOCK_MINIMO ?? 0)
-      }));
-      setItems(mapped);
-      setFiltered(mapped);
-    } catch (e) {
-      console.error('Error fetching inventario vw', e);
-      setItems([]);
-      setFiltered([]);
+      const inv = await fetchInventarioAlmacen();
+      if (inv.ok) {
+        const mapped = inv.data.map((r: any) => ({
+          id: r.id,
+          producto_id: r.producto_id,
+          codigo: String(r.producto_id),
+          nombre: r.nombre,
+          cantidad: r.cantidad,
+            ubicacion: sanitizeUbicacion(r.ubicacion),
+          stock_minimo: r.stock_minimo,
+          fecha_caducidad: r.fecha_caducidad,
+          caducada: r.caducada
+        }));
+        setItems(mapped);
+        setFiltered(mapped);
+      } else {
+        setItems([]); setFiltered([]);
+      }
     } finally {
       setLoading(false);
     }
@@ -54,20 +54,8 @@ export default function InventarioAlmacen() {
 
   useEffect(() => { load(); }, []);
 
-  // load sucursales for ubicacion select
   useEffect(() => {
-    async function loadSuc() {
-      try {
-        const res = await fetch(`${API}/api/manager/sucursales`);
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        setSucursales(Array.isArray(data) ? data : []);
-      } catch (e) {
-        console.warn('Failed to load sucursales', e);
-        setSucursales([]);
-      }
-    }
-    loadSuc();
+    fetchSucursales().then(res => { if (res.ok) setSucursales(res.data || []); });
   }, []);
 
   useEffect(() => {
@@ -80,9 +68,10 @@ export default function InventarioAlmacen() {
       || String(it.id || '').toLowerCase().includes(q)
       || String(it.ubicacion || '').toLowerCase().includes(q)
     ));
-    if (filter === 'agotado') out = out.filter((it: any) => it.cantidad === 0);
+    if (filter === 'agotado') out = out.filter((it: any) => it.cantidad === 0 && !it.caducada);
     else if (filter === 'bajo') out = out.filter((it: any) => it.cantidad <= (it.stock_minimo ?? 0));
     else if (filter === 'normal') out = out.filter((it: any) => it.cantidad > (it.stock_minimo ?? 0));
+    else if (filter === 'caducado') out = out.filter((it: any) => it.caducada);
     setFiltered(out);
   }, [search, filter, items]);
 
@@ -90,72 +79,107 @@ export default function InventarioAlmacen() {
 
   const saveEdit = async () => {
     if (!editing) return;
-    const { id, cantidad, ubicacion } = editing;
+    const { producto_id, cantidad } = editing;
     if (Number.isNaN(Number(cantidad))) { alert('Cantidad inválida'); return; }
+    const delta = Number(cantidad) - Number(items.find(i => i.producto_id === producto_id)?.cantidad || 0);
     try {
-      const body = { cantidad: Number(cantidad), actualizado_por: user?.id ?? null, ubicacion };
-      const res = await fetch(`${API}/api/almacen/inventario/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      if (!res.ok) throw new Error(await res.text());
-      // optimistic update in UI
-      setItems((prev) => prev.map((p) => (String(p.id) === String(id) ? { ...p, cantidad: Number(cantidad), ubicacion: sanitizeUbicacion(ubicacion) } : p)));
+      const res = await adjustInventarioAlmacen(producto_id, delta, user?.id);
+      if (!res.ok) throw new Error('Error');
+      setItems(prev => prev.map(p => p.producto_id === producto_id ? { ...p, cantidad: Number(cantidad) } : p));
       setEditing(null);
-      alert('Cantidad actualizada');
-    } catch (e) {
-      console.error('Error saving inventory edit', e);
-      alert('Error al actualizar cantidad');
-    }
+    } catch (e) { alert('Error al actualizar'); }
   };
 
-  return (
-    <div className="max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-4">
-        <h1 className="text-2xl font-semibold">Inventario - Almacén</h1>
-        <div className="space-x-2">
-          <input className="border rounded px-3 py-1" placeholder="Buscar por nombre, código o sucursal" value={search} onChange={(e) => setSearch(e.target.value)} />
-          <select value={filter} onChange={(e) => setFilter(e.target.value as any)} className="border rounded px-2 py-1">
-            <option value="all">Todos</option>
-            <option value="agotado">Agotado</option>
-            <option value="bajo">Bajo o crítico</option>
-            <option value="normal">Normal</option>
-          </select>
-        </div>
-      </div>
+  async function removeProducto(prodId: number) {
+    if (!confirm('Eliminar producto del almacén?')) return;
+    const res = await deleteInventarioAlmacenProducto(prodId);
+    if (res.ok) setItems(prev => prev.filter(p => p.producto_id !== prodId)); else alert('Error eliminando');
+  }
 
-      <div className="bg-white rounded-lg shadow-soft p-4 border">
-        <div className="overflow-x-auto">
-          <table className="w-full table-auto">
-            <thead>
-              <tr className="text-left text-sm text-gray-600">
-                <th className="px-3 py-2">Código</th>
-                <th className="px-3 py-2">Producto</th>
-                <th className="px-3 py-2">Cantidad</th>
-                <th className="px-3 py-2">Ubicación</th>
-                <th className="px-3 py-2">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && (<tr><td colSpan={5} className="px-3 py-6 text-center text-sm text-gray-500">Cargando...</td></tr>)}
-              {!loading && filtered.map((it: any, idx: number) => {
-                const isLow = it.cantidad <= (it.stock_minimo ?? 0);
-                return (
-                  <tr key={`${it.id}-${String(it.ubicacion ?? '')}-${idx}`} className={`border-t ${isLow ? 'bg-yellow-50' : ''}`}>
-                    <td className="px-3 py-2 text-sm">{it.codigo}</td>
-                    <td className="px-3 py-2 text-sm">{it.nombre}</td>
-                    <td className="px-3 py-2 text-sm">{it.cantidad} {isLow && <span className="text-xs text-yellow-700 ml-2">(bajo)</span>}</td>
-                    <td className="px-3 py-2 text-sm">{it.ubicacion ?? '-'}</td>
-                    <td className="px-3 py-2 text-sm">
-                      <Button type="button" onClick={() => openEdit(it)} className="px-3 py-1" size="sm">Ajustar</Button>
-                    </td>
-                  </tr>
-                );
-              })}
-              {!loading && filtered.length === 0 && (
-                <tr><td colSpan={5} className="px-3 py-6 text-center text-sm text-gray-500">No hay registros</td></tr>
-              )}
-            </tbody>
-          </table>
+  async function purgeExpired() {
+    setPurging(true);
+    const res = await purgeExpiredInventarioAlmacen();
+    if (res.ok) {
+      await load();
+      alert(`Removidos ${res.removed} productos caducados`);
+    } else alert('Error purgando caducados');
+    setPurging(false);
+  }
+
+  const expirados = items.filter(i => i.caducada);
+
+  return (
+    <div className="max-w-7xl mx-auto">
+      <motion.div initial={{ opacity:0, y:20 }} animate={{ opacity:1, y:0 }} transition={{ duration:0.4 }}>
+        <div className="flex justify-between mb-4 items-center">
+          <h1 className="text-3xl font-bold text-text-dark">Inventario Almacén</h1>
+          <div className="flex gap-2">
+            <input className="border rounded px-3 py-1 text-sm" placeholder="Buscar nombre / código" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <select value={filter} onChange={(e) => setFilter(e.target.value as any)} className="border rounded px-2 py-1 text-sm">
+              <option value="all">Todos</option>
+              <option value="agotado">Agotado</option>
+              <option value="bajo">Bajo</option>
+              <option value="normal">Normal</option>
+              <option value="caducado">Caducado</option>
+            </select>
+            <Button variant="secondary" size="sm" onClick={load}>Refrescar</Button>
+          </div>
         </div>
-      </div>
+
+        {expiredBanner && expirados.length > 0 && (
+          <div className="mb-4 p-3 rounded border border-red-300 bg-red-50 text-sm text-red-700 flex justify-between items-center">
+            <div>
+              <strong>{expirados.length} producto(s) caducado(s): </strong>
+              {expirados.slice(0,5).map(e => e.nombre || e.codigo).join(', ')}{expirados.length>5?'…':''}
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" variant="danger" onClick={purgeExpired} disabled={purging}>{purging?'Purga...':'Purgar caducados'}</Button>
+              <Button size="sm" variant="secondary" onClick={()=>setExpiredBanner(false)}>Ocultar</Button>
+            </div>
+          </div>
+        )}
+
+        <div className="bg-white rounded-lg shadow-soft p-6 border border-gray-medium">
+          <div className="overflow-x-auto">
+            <table className="w-full table-auto">
+              <thead>
+                <tr className="text-left text-sm text-gray-600">
+                  <th className="px-3 py-2">Código</th>
+                  <th className="px-3 py-2">Producto</th>
+                  <th className="px-3 py-2">Cantidad</th>
+                  <th className="px-3 py-2">Estado</th>
+                  <th className="px-3 py-2">Ubicación</th>
+                  <th className="px-3 py-2">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading && (<tr><td colSpan={6} className="px-3 py-6 text-center text-sm text-gray-500">Cargando...</td></tr>)}
+                {!loading && filtered.map((it: any, idx: number) => {
+                  const isLow = it.cantidad <= (it.stock_minimo ?? 0) && !it.caducada;
+                  return (
+                    <tr key={`${it.producto_id}-${idx}`} className={`border-t ${it.caducada ? 'bg-red-50' : isLow ? 'bg-yellow-50' : ''}`}>
+                      <td className="px-3 py-2 text-sm">{it.codigo}</td>
+                      <td className="px-3 py-2 text-sm">{it.nombre}</td>
+                      <td className="px-3 py-2 text-sm">{it.cantidad}</td>
+                      <td className="px-3 py-2 text-sm">{it.caducada ? 'Caducado' : isLow ? 'Bajo' : 'OK'}</td>
+                      <td className="px-3 py-2 text-sm">{it.ubicacion || '-'}</td>
+                      <td className="px-3 py-2 text-sm">
+                        <div className="flex gap-2">
+                          {!it.caducada && <Button type="button" onClick={() => setEditing({ producto_id: it.producto_id, cantidad: it.cantidad })} size="sm">Ajustar</Button>}
+                          <Button type="button" variant="danger" onClick={() => removeProducto(it.producto_id)} size="sm">Eliminar</Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {!loading && filtered.length === 0 && (
+                  <tr><td colSpan={6} className="px-3 py-6 text-center text-sm text-gray-500">No hay registros</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </motion.div>
 
       {/* Simple modal for editing */}
       {editing && (
@@ -165,18 +189,6 @@ export default function InventarioAlmacen() {
             <div className="mb-2">
               <label className="block text-sm text-gray-600">Cantidad</label>
               <input className="border px-3 py-2 w-full" value={String(editing.cantidad)} onChange={(e) => setEditing((s: any) => ({ ...s, cantidad: e.target.value }))} />
-            </div>
-            <div className="mb-4">
-              <label className="block text-sm text-gray-600">Ubicación</label>
-              <select className="border px-3 py-2 w-full" value={editing.ubicacion} onChange={(e) => setEditing((s: any) => ({ ...s, ubicacion: e.target.value }))}>
-                <option value="">-- Seleccione sucursal --</option>
-                {sucursales.map((s) => (
-                  <option key={s.id} value={s.nombre}>{s.nombre}</option>
-                ))}
-                {editing && editing.ubicacion && !sucursales.find(s => s.nombre === editing.ubicacion) && (
-                  <option value={editing.ubicacion}>{editing.ubicacion}</option>
-                )}
-              </select>
             </div>
             <div className="flex justify-end space-x-2">
               <Button type="button" onClick={() => setEditing(null)} className="px-3 py-1" size="sm">Cancelar</Button>

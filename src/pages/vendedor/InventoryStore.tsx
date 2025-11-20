@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { seedIfEmpty } from '../../utils/localStore';
-import { fetchInventoryVW } from '../../utils/api';
+import { readStore, seedIfEmpty, writeStore } from '../../utils/localStore';
+import { fetchInventoryWithStatus, fetchProducts } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 
 type Product = { id: string; nombre: string; descripcion?: string; cantidad: number; precio: number; ubicacion?: string; categoria?: string; stock_minimo?: number };
 
@@ -9,25 +10,55 @@ const InventoryStore: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('');
+  const [apiAvailable, setApiAvailable] = useState(true);
+  const { user } = useAuth();
 
   useEffect(() => {
     seedIfEmpty();
-    fetchInventoryVW().then(res => {
-      setProducts(res.data);
-      if (!res.ok) setApiAvailable(false);
-    }).catch(() => setApiAvailable(false));
-  }, []);
+    async function load() {
+      try {
+        if (user && user.sucursal_id) {
+          const res = await fetchInventoryWithStatus(Number(user.sucursal_id));
+          setProducts((res.data || []) as Product[]);
+          if (!res.ok) {
+            setApiAvailable(false);
+          }
+        } else {
+          // No user session or sucursal: try products as a fallback
+          try {
+            const prods = await fetchProducts();
+            setProducts((prods || []) as Product[]);
+          } catch {
+            setProducts(readStore<Product[]>('gf_products', []));
+            setApiAvailable(false);
+          }
+        }
+      } catch {
+        // Hard fallback to local cache
+        setProducts(readStore<Product[]>('gf_products', []));
+        setApiAvailable(false);
+      }
+    }
+    load();
+  }, [user]);
 
-  const [apiAvailable, setApiAvailable] = useState(true);
+  useEffect(() => {
+    writeStore('gf_products', products);
+  }, [products]);
 
   const categories = useMemo(() => Array.from(new Set(products.map(p => p.categoria || '').filter(Boolean))), [products]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return products.filter(p => {
-      if (category && p.categoria !== category) return false;
+      if (category && (p.categoria || '') !== category) return false;
       if (!q) return true;
-      return p.nombre.toLowerCase().includes(q) || p.id.toLowerCase().includes(q) || (p.descripcion||'').toLowerCase().includes(q);
+      const idStr = (p.id || '').toString().toLowerCase();
+      return (
+        (p.nombre || '').toLowerCase().includes(q) ||
+        idStr.includes(q) ||
+        (p.descripcion || '').toLowerCase().includes(q)
+      );
     });
   }, [products, query, category]);
 

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import Button from '../../components/Button';
 import { readStore, writeStore, seedIfEmpty } from '../../utils/localStore';
-import { postVenta, fetchProducts, fetchInventoryWithStatus } from '../../utils/api';
+import { postVenta, fetchProducts, fetchInventoryWithStatus, createDevolucionAlmacen } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
 
 type Product = { id: string; nombre: string; descripcion?: string; cantidad: number; precio: number; ubicacion?: string; categoria?: string; stock_minimo?: number };
@@ -15,6 +15,8 @@ const PuntoDeVenta: React.FC = () => {
   const [query, setQuery] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [method, setMethod] = useState<'efectivo'|'tarjeta'|'transferencia'>('efectivo');
+  const [lastSale, setLastSale] = useState<{ id?: number; folio: string; items: CartItem[] } | null>(null);
+  const [returnForm, setReturnForm] = useState<{ productId: string; qty: string; motivo: string; ventaId?: string }>({ productId: '', qty: '', motivo: '', ventaId: '' });
 
   const [apiAvailable, setApiAvailable] = useState(true);
   const { user } = useAuth();
@@ -72,7 +74,7 @@ const PuntoDeVenta: React.FC = () => {
   const iva = subtotal * TAX_RATE;
   const total = subtotal + iva;
 
-  function finalizeSale() {
+  async function finalizeSale() {
     if (cart.length === 0) return alert('Carrito vacío');
 
     // Minimal payload
@@ -96,26 +98,42 @@ const PuntoDeVenta: React.FC = () => {
       return alert('Usuario no autenticado: venta registrada localmente');
     }
 
-  console.log('POST /api/vendedor/ventas payload:', payload);
-  postVenta(payload, payload.vendedor_id, payload.sucursal_id)
-      .then(() => {
-        // on success update local stock
-        const sale = { folio, fecha: new Date().toISOString(), items: cart, subtotal, iva, total, metodo_pago: method };
-        const all = readStore<any[]>('gf_sales', []);
-        all.unshift(sale);
-        writeStore('gf_sales', all);
-        setProducts(products.map(p => {
-          const it = cart.find(c => c.productId === p.id);
-          if (!it) return p;
-          return { ...p, cantidad: Math.max(0, p.cantidad - it.qty) };
-        }));
-        setCart([]);
-        alert('Venta registrada.');
-      })
-      .catch((err: any) => {
-        console.error('postVenta error', err);
-        alert('Error registrando venta en el servidor, guardada localmente');
-      });
+    try {
+      const res = await postVenta(payload, payload.vendedor_id, payload.sucursal_id);
+      const sale = { folio, fecha: new Date().toISOString(), items: cart, subtotal, iva, total, metodo_pago: method };
+      const all = readStore<any[]>('gf_sales', []);
+      all.unshift(sale);
+      writeStore('gf_sales', all);
+      setProducts(products.map(p => {
+        const it = cart.find(c => c.productId === p.id);
+        if (!it) return p;
+        return { ...p, cantidad: Math.max(0, p.cantidad - it.qty) };
+      }));
+      setLastSale({ id: res?.id, folio, items: cart });
+      setCart([]);
+      alert('Venta registrada.');
+    } catch (err) {
+      console.error('postVenta error', err);
+      alert('Error registrando venta en el servidor, guardada localmente');
+    }
+  }
+
+  async function enviarDevolucion() {
+    const pid = Number(returnForm.productId);
+    const qty = Number(returnForm.qty);
+    if (!pid || !qty || qty <= 0) return alert('Seleccione producto y cantidad > 0');
+    if (!returnForm.motivo.trim()) return alert('Indique el motivo de la devolución');
+    try {
+      const sucursal_id = Number(user?.sucursal_id || 0) || undefined;
+      const manualVentaId = returnForm.ventaId ? Number(returnForm.ventaId) : undefined;
+      const venta_id = manualVentaId && manualVentaId > 0 ? manualVentaId : (lastSale?.id);
+      await createDevolucionAlmacen({ producto_id: pid, sucursal_id, cantidad: qty, motivo: returnForm.motivo.trim(), tipo: 'cliente', creado_por: user?.id, venta_id });
+      alert('Devolución enviada al almacén');
+      setReturnForm({ productId: '', qty: '', motivo: '', ventaId: '' });
+    } catch (e) {
+      console.error('createDevolucionAlmacen error', e);
+      alert('No se pudo registrar la devolución');
+    }
   }
 
   return (
@@ -198,6 +216,29 @@ const PuntoDeVenta: React.FC = () => {
               <div className="mt-4 flex flex-col gap-2">
                 <Button onClick={finalizeSale}>Finalizar Venta</Button>
                 <Button variant="secondary" onClick={() => setCart([])}>Vaciar</Button>
+              </div>
+
+              <div className="mt-6 border-t pt-4">
+                <h4 className="font-semibold mb-2">Registrar devolución</h4>
+                {lastSale && (
+                  <div className="text-xs text-gray-600 mb-2">Última venta: Folio {lastSale.folio} {lastSale.id ? `(ID ${lastSale.id})` : ''}</div>
+                )}
+                <div className="flex flex-col gap-2">
+                  <label className="text-sm">Producto</label>
+                  <select className="border rounded px-2 py-1" value={returnForm.productId} onChange={e=>setReturnForm(f=>({ ...f, productId: e.target.value }))}>
+                    <option value="">Seleccione</option>
+                    {products.map(p => (
+                      <option key={p.id} value={p.id}>{p.nombre}</option>
+                    ))}
+                  </select>
+                  <label className="text-sm">Cantidad a devolver</label>
+                  <input className="border rounded px-2 py-1" value={returnForm.qty} onChange={e=>setReturnForm(f=>({ ...f, qty: e.target.value }))} placeholder="0" />
+                  <label className="text-sm">Motivo</label>
+                  <input className="border rounded px-2 py-1" value={returnForm.motivo} onChange={e=>setReturnForm(f=>({ ...f, motivo: e.target.value }))} placeholder="Defecto, caducidad, otro" />
+                  <label className="text-sm">ID de venta (opcional)</label>
+                  <input className="border rounded px-2 py-1" value={returnForm.ventaId} onChange={e=>setReturnForm(f=>({ ...f, ventaId: e.target.value }))} placeholder="Ej: 12345" />
+                  <Button onClick={enviarDevolucion}>Enviar devolución</Button>
+                </div>
               </div>
             </aside>
           </div>

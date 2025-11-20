@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { FileText, Plus, Edit, Trash2, X } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { FileText, Plus, Edit, Trash2, X, CheckCircle, CircleOff } from 'lucide-react';
 import { motion } from 'framer-motion';
 import Button from '../../components/Button';
 import Table from '../../components/Table';
-import { fetchPromociones, deletePromocion, createPromocion, fetchProducts } from '../../utils/api';
+import { fetchPromocionesFiltered, deletePromocion, createPromocion, updatePromocion, togglePromocionActiva, fetchProducts } from '../../utils/api';
 
 interface Promotion {
   id: number;
@@ -28,7 +28,8 @@ const Promotions: React.FC = () => {
   const [promotions, setPromotions] = useState<Promotion[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [products, setProducts] = useState<Array<{ id: string | number; nombre: string; precio: number }>>([]);
-  const [newPromotion, setNewPromotion] = useState({
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [form, setForm] = useState({
     nombre: '',
     descripcion: '',
     producto_id: '',
@@ -39,8 +40,11 @@ const Promotions: React.FC = () => {
     fecha_fin: '',
     dias_semana: '',
     aplica_todas_sucursales: true,
-    creada_por: 1 // TODO: obtener del contexto de autenticación
+    activa: true,
+    creada_por: 1
   });
+  const [filters, setFilters] = useState({ producto: '', activa: '', tipo: '', nombre: '' });
+  const [loading, setLoading] = useState(false);
 
   // Load product list for selecting by name (so manager can pick product by name instead of typing ID)
   useEffect(() => {
@@ -53,40 +57,35 @@ const Promotions: React.FC = () => {
     loadProducts();
   }, []);
 
-  // Compute nuevo_precio automatically when product, tipo or valor_descuento changes
+  // Map productos para mostrar nombre en tabla
+  const productMap = useMemo(() => {
+    const m: Record<number, { id: string|number; nombre: string; precio: number }> = {};
+    products.forEach(p => { m[Number(p.id)] = p; });
+    return m;
+  }, [products]);
+
+  // Compute nuevo_precio automáticamente
   useEffect(() => {
-    const prodId = String(newPromotion.producto_id || '');
-    if (!prodId) return;
-    const prod = products.find(p => String(p.id) === prodId);
-    if (!prod) return;
-    const precioOriginal = Number(prod.precio ?? 0);
-    const valor = parseFloat(String(newPromotion.valor_descuento || '0'));
-
-    let computed: string = '';
-    if (newPromotion.tipo === 'descuento_porcentaje' && !isNaN(valor)) {
-      computed = (precioOriginal * (1 - (valor / 100))).toFixed(2);
-    } else if (newPromotion.tipo === 'descuento_fijo' && !isNaN(valor)) {
-      computed = Math.max(0, precioOriginal - valor).toFixed(2);
-    } else {
-      // for 2x1/3x2 or if no discount value, clear computed price
-      computed = '';
+    if (!form.producto_id) return;
+    if (form.tipo === 'descuento_porcentaje' || form.tipo === 'descuento_fijo') {
+      const nuevo = computeNuevoPrecio(form.tipo, form.valor_descuento, form.producto_id, products);
+      if (nuevo !== form.nuevo_precio) setForm(f => ({ ...f, nuevo_precio: nuevo }));
+    } else if (form.nuevo_precio) {
+      setForm(f => ({ ...f, nuevo_precio: '' }));
     }
+  }, [form.producto_id, form.tipo, form.valor_descuento, products]);
 
-    // Only update if different to avoid unnecessary renders
-    if (String(newPromotion.nuevo_precio || '') !== String(computed)) {
-      setNewPromotion(prev => ({ ...prev, nuevo_precio: computed }));
-    }
-  }, [newPromotion.producto_id, newPromotion.tipo, newPromotion.valor_descuento, products]);
-
-  useEffect(() => {
-    const loadPromotions = async () => {
-      const result = await fetchPromociones();
-      if (result.ok) {
-        setPromotions(result.data);
-      }
-    };
-    loadPromotions();
-  }, []);
+  async function loadPromotions() {
+    setLoading(true);
+    try {
+      const result = await fetchPromocionesFiltered({
+        producto_id: filters.producto || undefined,
+        activa: filters.activa === '' ? undefined : filters.activa === '1'
+      });
+      if (result.ok) setPromotions(result.data || []); else setPromotions([]);
+    } finally { setLoading(false); }
+  }
+  useEffect(() => { loadPromotions(); }, [filters.producto, filters.activa]);
 
   const handleDeletePromotion = async (id: number) => {
     if (confirm('¿Está seguro de eliminar esta promoción?')) {
@@ -104,32 +103,40 @@ const Promotions: React.FC = () => {
     alert('Generando reporte PDF de promociones...');
   };
 
-  const handleOpenModal = () => {
+  function openNew() {
+    setEditingId(null);
+    setForm({ nombre:'', descripcion:'', producto_id:'', tipo:'descuento_porcentaje', valor_descuento:'', nuevo_precio:'', fecha_inicio:'', fecha_fin:'', dias_semana:'', aplica_todas_sucursales:true, activa:true, creada_por:1 });
     setShowModal(true);
-  };
+  }
+
+  function openEdit(p: Promotion) {
+    setEditingId(p.id);
+    setForm({
+      nombre: p.nombre,
+      descripcion: p.descripcion || '',
+      producto_id: String(p.producto_id),
+      tipo: p.tipo as any,
+      valor_descuento: p.valor_descuento != null ? String(p.valor_descuento) : '',
+      nuevo_precio: p.nuevo_precio != null ? String(p.nuevo_precio) : '',
+      fecha_inicio: p.fecha_inicio,
+      fecha_fin: p.fecha_fin,
+      dias_semana: p.dias_semana || '',
+      aplica_todas_sucursales: p.aplica_todas_sucursales,
+      activa: p.activa,
+      creada_por: p.creada_por
+    });
+    setShowModal(true);
+  }
 
   const handleCloseModal = () => {
     setShowModal(false);
-    // Resetear formulario
-    setNewPromotion({
-      nombre: '',
-      descripcion: '',
-      producto_id: '',
-      tipo: 'descuento_porcentaje',
-      valor_descuento: '',
-      nuevo_precio: '',
-      fecha_inicio: '',
-      fecha_fin: '',
-      dias_semana: '',
-      aplica_todas_sucursales: true,
-      creada_por: 1
-    });
+    setEditingId(null);
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
     const inputValue = type === 'checkbox' ? (e.target as HTMLInputElement).checked : value;
-    setNewPromotion(prev => ({
+    setForm(prev => ({
       ...prev,
       [name]: inputValue
     }));
@@ -139,37 +146,48 @@ const Promotions: React.FC = () => {
     e.preventDefault();
     
     // Validación básica
-    if (!newPromotion.nombre || !newPromotion.producto_id || !newPromotion.fecha_inicio || !newPromotion.fecha_fin) {
+    if (!form.nombre || !form.producto_id || !form.fecha_inicio || !form.fecha_fin) {
       alert('Por favor complete todos los campos requeridos');
+      return;
+    }
+
+    if (new Date(form.fecha_fin) < new Date(form.fecha_inicio)) {
+      alert('La fecha fin debe ser >= fecha inicio');
       return;
     }
 
     // Preparar datos para enviar
     const promotionData = {
-      ...newPromotion,
-      producto_id: parseInt(newPromotion.producto_id),
-      valor_descuento: newPromotion.valor_descuento ? parseFloat(newPromotion.valor_descuento) : null,
-      nuevo_precio: newPromotion.nuevo_precio ? parseFloat(newPromotion.nuevo_precio) : null,
+      ...form,
+      producto_id: parseInt(form.producto_id),
+      valor_descuento: form.valor_descuento ? parseFloat(form.valor_descuento) : null,
+      nuevo_precio: form.nuevo_precio ? parseFloat(form.nuevo_precio) : null,
     };
 
     try {
-      const result = await createPromocion(promotionData);
-      if (result.ok) {
-        alert('Promoción creada exitosamente');
-        handleCloseModal();
-        // Recargar las promociones
-        const promotionsResult = await fetchPromociones();
-        if (promotionsResult.ok) {
-          setPromotions(promotionsResult.data);
-        }
+      let result;
+      if (editingId == null) {
+        result = await createPromocion(promotionData);
+        if (!result.ok) return alert('Error al crear la promoción');
+        alert('Promoción creada');
       } else {
-        alert('Error al crear la promoción');
+        result = await updatePromocion(editingId, promotionData);
+        if (!result.ok) return alert('Error al actualizar');
+        alert('Promoción actualizada');
       }
+      handleCloseModal();
+      await loadPromotions();
     } catch (error) {
       console.error('Error:', error);
       alert('Error al crear la promoción');
     }
   };
+
+  function toggleActiva(row: Promotion) {
+    togglePromocionActiva(row.id, !row.activa).then(r => {
+      if (r.ok) setPromotions(prev => prev.map(p => p.id === row.id ? { ...p, activa: !row.activa } : p));
+    });
+  }
 
   const columns = [
     { key: 'id', header: 'ID' },
@@ -183,7 +201,10 @@ const Promotions: React.FC = () => {
         </div>
       )
     },
-    { key: 'producto_id', header: 'ID Producto' },
+    { key: 'producto_id', header: 'Producto', render: (_: any, row: Promotion) => {
+      const prod = productMap[row.producto_id];
+      return prod ? prod.nombre : row.producto_id;
+    } },
     {
       key: 'tipo',
       header: 'Tipo',
@@ -267,10 +288,18 @@ const Promotions: React.FC = () => {
       render: (_: any, row: Promotion) => (
         <div className="flex space-x-2">
           <button
-            onClick={() => alert(`Editando promoción ${row.id}`)}
+            onClick={() => openEdit(row)}
             className="p-1 text-green-primary hover:bg-green-light rounded"
+            title="Editar"
           >
             <Edit size={16} />
+          </button>
+          <button
+            onClick={() => toggleActiva(row)}
+            className="p-1 text-blue-600 hover:bg-blue-100 rounded"
+            title={row.activa ? 'Desactivar' : 'Activar'}
+          >
+            {row.activa ? <CircleOff size={16} /> : <CheckCircle size={16} />}
           </button>
           <button
             onClick={() => handleDeletePromotion(row.id)}
@@ -294,7 +323,7 @@ const Promotions: React.FC = () => {
       >
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-3xl font-bold text-text-dark">Promociones</h1>
-          <Button onClick={handleOpenModal}>
+          <Button onClick={openNew}>
             <Plus size={16} className="mr-2" />
             Nueva Promoción
           </Button>
@@ -310,7 +339,28 @@ const Promotions: React.FC = () => {
             </p>
           </div>
 
-          <Table columns={columns} data={promotions} />
+          <div className="mb-4 flex flex-wrap gap-3 items-end">
+            <div>
+              <label className="block text-xs text-gray-600">Producto</label>
+              <select value={filters.producto} onChange={e=>setFilters(f=>({...f,producto:e.target.value}))} className="border px-2 py-1 rounded text-sm">
+                <option value="">Todos</option>
+                {products.map(p => <option key={String(p.id)} value={String(p.id)}>{p.nombre}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600">Activa</label>
+              <select value={filters.activa} onChange={e=>setFilters(f=>({...f,activa:e.target.value}))} className="border px-2 py-1 rounded text-sm">
+                <option value="">Todas</option>
+                <option value="1">Activas</option>
+                <option value="0">Inactivas</option>
+              </select>
+            </div>
+            <div className="ml-auto flex gap-2">
+              <Button variant="secondary" size="sm" onClick={()=>setFilters({ producto:'', activa:'', tipo:'', nombre:'' })}>Limpiar</Button>
+              <Button variant="secondary" size="sm" onClick={loadPromotions}>Refrescar</Button>
+            </div>
+          </div>
+          {loading ? <div className="py-6 text-sm text-gray-600">Cargando promociones...</div> : <Table columns={columns} data={promotions} />}
 
           <div className="flex items-center justify-between mt-6 pt-4 border-t border-gray-medium">
             <div className="flex flex-wrap gap-4 text-sm">
@@ -344,7 +394,7 @@ const Promotions: React.FC = () => {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold text-text-dark">Nueva Promoción</h2>
+              <h2 className="text-xl font-bold text-text-dark">{editingId == null ? 'Nueva Promoción' : `Editar Promoción #${editingId}`}</h2>
               <button
                 onClick={handleCloseModal}
                 className="text-gray-500 hover:text-gray-700"
@@ -362,7 +412,7 @@ const Promotions: React.FC = () => {
                   <input
                     type="text"
                     name="nombre"
-                    value={newPromotion.nombre}
+                    value={form.nombre}
                     onChange={handleInputChange}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-primary"
                     required
@@ -375,7 +425,7 @@ const Promotions: React.FC = () => {
                   </label>
                   <select
                     name="producto_id"
-                    value={newPromotion.producto_id}
+                    value={form.producto_id}
                     onChange={handleInputChange}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-primary"
                     required
@@ -396,7 +446,7 @@ const Promotions: React.FC = () => {
                 </label>
                 <textarea
                   name="descripcion"
-                  value={newPromotion.descripcion}
+                  value={form.descripcion}
                   onChange={handleInputChange}
                   rows={3}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-primary"
@@ -410,7 +460,7 @@ const Promotions: React.FC = () => {
                   </label>
                   <select
                     name="tipo"
-                    value={newPromotion.tipo}
+                    value={form.tipo}
                     onChange={handleInputChange}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-primary"
                     required
@@ -422,7 +472,7 @@ const Promotions: React.FC = () => {
                   </select>
                 </div>
 
-                {newPromotion.tipo === 'descuento_porcentaje' && (
+                {form.tipo === 'descuento_porcentaje' && (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Valor Descuento (%)
@@ -430,7 +480,7 @@ const Promotions: React.FC = () => {
                     <input
                       type="number"
                       name="valor_descuento"
-                      value={newPromotion.valor_descuento}
+                      value={form.valor_descuento}
                       onChange={handleInputChange}
                       min="0"
                       max="100"
@@ -440,7 +490,7 @@ const Promotions: React.FC = () => {
                   </div>
                 )}
 
-                {(newPromotion.tipo === 'descuento_fijo' || newPromotion.tipo === 'descuento_porcentaje') && (
+                {(form.tipo === 'descuento_fijo' || form.tipo === 'descuento_porcentaje') && (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Nuevo Precio
@@ -448,13 +498,13 @@ const Promotions: React.FC = () => {
                     <input
                       type="number"
                       name="nuevo_precio"
-                      value={newPromotion.nuevo_precio}
+                      value={form.nuevo_precio}
                       onChange={handleInputChange}
                       min="0"
                       step="0.01"
-                      readOnly={newPromotion.tipo === 'descuento_porcentaje' || newPromotion.tipo === 'descuento_fijo'}
+                      readOnly={form.tipo === 'descuento_porcentaje' || form.tipo === 'descuento_fijo'}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-primary bg-white"
-                      placeholder={newPromotion.nuevo_precio ? undefined : 'Se calculará automáticamente al seleccionar producto y poner descuento'}
+                      placeholder={form.nuevo_precio ? undefined : 'Se calculará automáticamente'}
                     />
                   </div>
                 )}
@@ -468,7 +518,7 @@ const Promotions: React.FC = () => {
                   <input
                     type="date"
                     name="fecha_inicio"
-                    value={newPromotion.fecha_inicio}
+                    value={form.fecha_inicio}
                     onChange={handleInputChange}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-primary"
                     required
@@ -482,7 +532,7 @@ const Promotions: React.FC = () => {
                   <input
                     type="date"
                     name="fecha_fin"
-                    value={newPromotion.fecha_fin}
+                    value={form.fecha_fin}
                     onChange={handleInputChange}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-primary"
                     required
@@ -497,23 +547,33 @@ const Promotions: React.FC = () => {
                 <input
                   type="text"
                   name="dias_semana"
-                  value={newPromotion.dias_semana}
+                  value={form.dias_semana}
                   onChange={handleInputChange}
                   placeholder="ej: Lunes,Martes,Miércoles"
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-primary"
                 />
               </div>
 
-              <div className="flex items-center">
-                <input
-                  type="checkbox"
-                  name="aplica_todas_sucursales"
-                  checked={newPromotion.aplica_todas_sucursales}
-                  onChange={handleInputChange}
-                  className="mr-2"
-                />
-                <label className="text-sm font-medium text-gray-700">
+              <div className="flex items-center gap-6">
+                <label className="flex items-center text-sm font-medium text-gray-700">
+                  <input
+                    type="checkbox"
+                    name="aplica_todas_sucursales"
+                    checked={form.aplica_todas_sucursales}
+                    onChange={handleInputChange}
+                    className="mr-2"
+                  />
                   Aplica a todas las sucursales
+                </label>
+                <label className="flex items-center text-sm font-medium text-gray-700">
+                  <input
+                    type="checkbox"
+                    name="activa"
+                    checked={form.activa}
+                    onChange={handleInputChange}
+                    className="mr-2"
+                  />
+                  Activa
                 </label>
               </div>
 
@@ -526,7 +586,7 @@ const Promotions: React.FC = () => {
                   Cancelar
                 </Button>
                 <Button type="submit">
-                  Crear Promoción
+                  {editingId == null ? 'Crear' : 'Guardar'}
                 </Button>
               </div>
             </form>
@@ -536,5 +596,18 @@ const Promotions: React.FC = () => {
     </div>
   );
 };
+
+// ---- Helpers fuera del componente principal ----
+function computeNuevoPrecio(tipo: string, valor_descuento: string, productoId: string|number, products: Array<{ id: string|number; precio: number }>): string {
+  const prod = products.find(p => String(p.id) === String(productoId));
+  if (!prod) return '';
+  const precioOriginal = Number(prod.precio || 0);
+  const valor = parseFloat(valor_descuento || '0');
+  if (tipo === 'descuento_porcentaje' && !isNaN(valor)) return (precioOriginal * (1 - valor/100)).toFixed(2);
+  if (tipo === 'descuento_fijo' && !isNaN(valor)) return Math.max(0, precioOriginal - valor).toFixed(2);
+  return '';
+}
+
+// (toggleActiva ahora está dentro del componente para acceso a estado.)
 
 export default Promotions;

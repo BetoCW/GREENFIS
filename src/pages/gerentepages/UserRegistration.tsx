@@ -2,10 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import Button from '../../components/Button';
 import FormField from '../../components/FormField';
-
-// Prefer a Vite environment variable for the backend base URL, fallback to localhost:4000
-const BACKEND = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:4000';
-const API_BASE = `${BACKEND}/api/manager`;
+import { fetchUsuarios, createUsuario, updateUsuario, deleteUsuario, fetchSucursales } from '../../utils/api';
 
 const UserRegistration: React.FC = () => {
   const [formData, setFormData] = useState({
@@ -18,110 +15,93 @@ const UserRegistration: React.FC = () => {
 
   // editingId: null => creating new user; number => editing that user id
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingPk, setEditingPk] = useState<string>('id_usuario');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // If editingId is set, perform PUT to update only nombre, correo and contrasena
     if (editingId) {
-      // Minimal validation per requirement: nombre, correo, contrasena required
-      if (!formData.nombre || !formData.correo || !formData.contrasena) {
-        alert('Por favor complete los campos requeridos (nombre, correo y contraseña)');
+      if (!formData.nombre || !formData.correo) {
+        alert('Nombre y correo son obligatorios');
         return;
       }
-
-      fetch(`${API_BASE}/usuarios/${editingId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nombre: formData.nombre, correo: formData.correo, contrasena: formData.contrasena })
-      })
-        .then(async (res) => {
-          const text = await res.text();
-          if (!res.ok) throw new Error(text || res.statusText);
-          try { return JSON.parse(text); } catch { return text; }
-        })
-        .then((updated) => {
-          // Update local list: replace the edited user (match by id_usuario or id)
-          setUsers((list) => list.map((it) => {
-            const idVal = it.id_usuario ?? it.id;
-            if (String(idVal) === String(editingId)) {
-              return (updated && typeof updated === 'object') ? updated : { ...it, nombre: formData.nombre, correo: formData.correo };
-            }
-            return it;
-          }));
-          setEditingId(null);
-          setFormData({ nombre: '', correo: '', rol: '', sucursal_id: '', contrasena: '' });
-        })
-        .catch((err) => {
-          console.error('Error updating user', err);
-          alert('Error al actualizar usuario. Ver consola para detalles.');
-        });
-
-      return; // stop here, do not run create POST
-    }
-
-    // Basic client-side validation for creation
-    if (!formData.nombre || !formData.correo || !formData.rol || !formData.contrasena) {
-      alert('Por favor complete los campos requeridos');
+      const res = await updateUsuario(editingId, {
+        nombre: formData.nombre,
+        correo: formData.correo,
+        rol: formData.rol || undefined,
+        sucursal_id: formData.sucursal_id ? Number(formData.sucursal_id) : null,
+        contrasena: formData.contrasena || undefined
+      }, editingPk);
+      if (!res.ok) {
+        console.error('Update usuario error:', res.error);
+        const msg = (res.error && (res.error.message || res.error.code)) ? `${res.error.message || res.error.code}` : 'Error desconocido';
+        alert('Error al actualizar usuario: ' + msg);
+        return;
+      }
+      // Supabase returns representation array
+      const updatedRow = Array.isArray(res.data) ? res.data[0] : res.data;
+      setUsers(list => list.map(it => (String(it.id) === String(editingId) ? updatedRow : it)));
+      setEditingId(null);
+      setEditingPk('id_usuario');
+      setFormData({ nombre: '', correo: '', rol: '', sucursal_id: '', contrasena: '' });
       return;
     }
-
-    // Post to server (creation) - original code preserved
-    fetch(`${API_BASE}/usuarios`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      // ensure numeric sucursal_id or null
-      body: JSON.stringify({ nombre: formData.nombre, correo: formData.correo, rol: formData.rol, contrasena: formData.contrasena, sucursal_id: formData.sucursal_id ? Number(formData.sucursal_id) : null })
-    })
-      .then(async (res) => {
-        const text = await res.text();
-        // If response is not JSON (for example an HTML error page) avoid JSON.parse exception
-        if (!res.ok) throw new Error(text || res.statusText);
-        try {
-          return JSON.parse(text);
-        } catch (err) {
-          // If parsing fails, return the raw text
-          return text;
-        }
-      })
-      .then((created) => {
-        // Update local list
-        setUsers((u) => [created, ...u]);
-        setFormData({ nombre: '', correo: '', rol: '', sucursal_id: '', contrasena: '' });
-      })
-      .catch((err) => {
-        console.error('Error creating user', err);
-        alert('Error al crear usuario. Ver consola para detalles.');
-      });
+    if (!formData.nombre || !formData.correo || !formData.rol || !formData.contrasena) {
+      alert('Complete los campos obligatorios');
+      return;
+    }
+    const res = await createUsuario({
+      nombre: formData.nombre,
+      correo: formData.correo,
+      rol: formData.rol,
+      sucursal_id: formData.sucursal_id ? Number(formData.sucursal_id) : null,
+      contrasena: formData.contrasena
+    });
+    if (!res.ok) {
+      console.error('Create usuario error:', res.error);
+      const msg = (res.error && (res.error.message || res.error.code)) ? `${res.error.message || res.error.code}` : 'Error desconocido';
+      alert('Error al crear usuario: ' + msg);
+      return;
+    }
+    const createdRow = Array.isArray(res.data) ? res.data[0] : res.data;
+    setUsers(u => [createdRow, ...u]);
+    setFormData({ nombre: '', correo: '', rol: '', sucursal_id: '', contrasena: '' });
   };
 
   const [users, setUsers] = useState<Array<any>>([]);
+  const [sucursales, setSucursales] = useState<Array<{ id: number; nombre: string }>>([]);
 
   useEffect(() => {
-    // fetch existing users
-    fetch(`${API_BASE}/usuarios`)
-      .then(async (r) => {
-        const text = await r.text();
-        if (!r.ok) throw new Error(text || r.statusText);
-        try {
-          return JSON.parse(text);
-        } catch (err) {
-          // sometimes the backend returns non-json (html), log and throw
-          throw new Error('Invalid JSON response: ' + text.slice(0, 200));
-        }
-      })
-      .then((data) => setUsers(data || []))
-      .catch((err) => { console.error('Error fetching usuarios', err); setUsers([]); });
+    const load = async () => {
+      const res = await fetchUsuarios();
+      if (res.ok) setUsers(res.data || []);
+      else setUsers([]);
+      const sucRes = await fetchSucursales();
+      if (sucRes.ok) setSucursales(sucRes.data || []);
+    };
+    load();
   }, []);
 
   const startEdit = (u: any) => {
-    const id = u.id_usuario ?? u.id;
-    setEditingId(Number(id));
+    setEditingId(Number(u.id));
+    setEditingPk(u.pkColumn || 'id');
     setFormData({ nombre: u.nombre || '', correo: u.correo || '', rol: u.rol || '', sucursal_id: u.sucursal_id ? String(u.sucursal_id) : '', contrasena: '' });
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  const removeUser = async (id: number, pk: string) => {
+    if (!confirm('¿Eliminar usuario?')) return;
+    const res = await deleteUsuario(id, pk);
+    if (!res.ok) {
+      console.error('Delete usuario error:', res.error);
+      const msg = (res.error && (res.error.message || res.error.code)) ? `${res.error.message || res.error.code}` : 'Error desconocido';
+      alert('Error al eliminar usuario: ' + msg);
+      return;
+    }
+    setUsers(list => list.filter(it => !(String(it.id) === String(id) && (it.pkColumn || 'id_usuario') === pk)));
   };
 
   const cancelEdit = () => {
     setEditingId(null);
+    setEditingPk('id_usuario');
     setFormData({ nombre: '', correo: '', rol: '', sucursal_id: '', contrasena: '' });
   };
 
@@ -213,21 +193,22 @@ const UserRegistration: React.FC = () => {
                     <th className="px-3 py-2">Nombre</th>
                     <th className="px-3 py-2">Correo</th>
                     <th className="px-3 py-2">Rol</th>
-                    <th className="px-3 py-2">Teléfono</th>
+                    <th className="px-3 py-2">Sucursal</th>
                     <th className="px-3 py-2">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
                   {users.map((u) => (
-                    <tr key={u.id_usuario || u.id} className="border-t">
-                      <td className="px-3 py-2 text-sm">{u.id_usuario ?? u.id}</td>
+                    <tr key={u.id} className="border-t">
+                      <td className="px-3 py-2 text-sm">{u.id}</td>
                       <td className="px-3 py-2 text-sm">{u.nombre}</td>
                       <td className="px-3 py-2 text-sm">{u.correo}</td>
                       <td className="px-3 py-2 text-sm">{u.rol}</td>
-                      <td className="px-3 py-2 text-sm">{u.sucursal_id ?? '-'}</td>
+                      <td className="px-3 py-2 text-sm">{(() => { const s = sucursales.find(x => String(x.id) === String(u.sucursal_id)); return s ? s.nombre : '-'; })()}</td>
                       <td className="px-3 py-2 text-sm">
                         <div className="flex space-x-2">
                           <Button type="button" onClick={() => startEdit(u)} className="px-3 py-1" size="sm">EDITAR</Button>
+                          <Button type="button" onClick={() => removeUser(Number(u.id), u.pkColumn || 'id')} className="px-3 py-1 bg-red-600 hover:bg-red-700" size="sm">ELIMINAR</Button>
                         </div>
                       </td>
                     </tr>
