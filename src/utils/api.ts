@@ -67,7 +67,18 @@ export async function fetchProducts() {
 
 export async function createProduct(payload: any) {
   const client = tryClient(); if (!client) return { ok: false, error: 'No server' } as any;
-  return client.insert(TBL.productos, payload);
+  const res = await client.insert(TBL.productos, payload);
+  if (res.ok) {
+    // Ensure warehouse inventory row exists (cantidad 0) so gerente/almacen views see product immediately
+    try {
+      const row = Array.isArray(res.data) ? res.data[0] : res.data;
+      const productId = Number(row?.id);
+      if (!Number.isNaN(productId)) {
+        await adjustInventarioAlmacen(productId, 0, payload.creado_por);
+      }
+    } catch {}
+  }
+  return res;
 }
 
 export async function updateProduct(id: string | number, payload: any) {
@@ -122,6 +133,25 @@ export async function fetchInventoryVW() {
       sucursal_id: Number(r.sucursal_id)
     };
   });
+  // Append products missing in any sucursal inventory (cantidad 0, ubicacion 'Sin sucursal')
+  const presentIds = new Set(data.map(d => Number(d.id)));
+  for (const p of prodRes.data) {
+    const pid = Number(p.id);
+    if (!presentIds.has(pid)) {
+      data.push({
+        id: String(pid),
+        nombre: p.nombre || '',
+        descripcion: p.descripcion || '',
+        cantidad: 0,
+        precio: Number(p.precio||0),
+        ubicacion: 'Sin sucursal',
+        categoria: String(p.categoria_id||''),
+        stock_minimo: Number(p.stock_minimo||0),
+        cantidad_caducada: 0,
+        sucursal_id: -1
+      });
+    }
+  }
   return { ok: true, data };
 }
 
@@ -153,6 +183,25 @@ export async function fetchInventoryWithStatus(sucursalId: number) {
       sucursal_id: Number(r.sucursal_id)
     };
   });
+  // Add missing products with cantidad 0 for this sucursal
+  const presentIds = new Set(data.map(d => Number(d.id)));
+  for (const p of prodRes.data) {
+    const pid = Number(p.id);
+    if (!presentIds.has(pid)) {
+      data.push({
+        id: String(pid),
+        nombre: p.nombre || '',
+        descripcion: p.descripcion || '',
+        cantidad: 0,
+        precio: Number(p.precio||0),
+        ubicacion: `Sucursal ${String(sucursalId)}`,
+        categoria: String(p.categoria_id||''),
+        stock_minimo: Number(p.stock_minimo||0),
+        cantidad_caducada: 0,
+        sucursal_id: sucursalId
+      });
+    }
+  }
   return { ok: true, data };
 }
 
@@ -235,6 +284,84 @@ export async function fetchVentas(filters?: { sucursal_id?: number|string; vende
     });
   }
   return { ok: true, data } as any;
+}
+
+// =============================
+// Ventas agregadas (dashboard)
+// =============================
+export async function fetchVentasRange(fecha_inicio: string, fecha_fin: string, opts?: { sucursal_id?: number|string; vendedor_id?: number|string }) {
+  return fetchVentas({ fecha_inicio, fecha_fin, sucursal_id: opts?.sucursal_id, vendedor_id: opts?.vendedor_id });
+}
+
+export async function fetchVentasAggregate(fecha_inicio: string, fecha_fin: string, opts?: { sucursal_id?: number|string; vendedor_id?: number|string }) {
+  const ventasRes = await fetchVentasRange(fecha_inicio, fecha_fin, opts);
+  if (!ventasRes.ok) return ventasRes as any;
+  const ventas = ventasRes.data;
+  let total = 0, tickets = 0, subtotal = 0, iva = 0;
+  const metodoCount: Record<string, number> = {};
+  for (const v of ventas) {
+    total += Number(v.total||v.monto_total||0);
+    tickets += 1;
+    subtotal += Number(v.subtotal||0);
+    iva += Number(v.iva||0);
+    const metodo = String(v.metodo_pago||'desconocido');
+    metodoCount[metodo] = (metodoCount[metodo]||0)+1;
+  }
+  const promedioTicket = tickets ? total / tickets : 0;
+  return { ok: true, data: { total, tickets, subtotal, iva, promedioTicket, metodoCount } } as any;
+}
+
+export async function fetchTopProductos(fecha_inicio: string, fecha_fin: string, limit = 5, opts?: { sucursal_id?: number|string; vendedor_id?: number|string }) {
+  const client = tryClient(); if (!client) return { ok: false, data: [], error: 'Supabase client no inicializado' } as any;
+  // Primero traer ventas en rango para filtrar detalle_ventas
+  const ventasRes = await fetchVentasRange(fecha_inicio, fecha_fin, opts);
+  if (!ventasRes.ok) return ventasRes as any;
+  const ventas = ventasRes.data;
+  const ids = ventas.map((v: any) => v.id).filter((id: any) => id != null);
+  if (!ids.length) return { ok: true, data: [] };
+  // Obtener detalles por lote (si muchos ids, dividir)
+  const chunkSize = 100;
+  const detalles: any[] = [];
+  for (let i=0; i<ids.length; i+=chunkSize) {
+    const slice = ids.slice(i, i+chunkSize);
+    const detRes = await client.list(TBL.detalle_ventas, { select: 'id,venta_id,producto_id,cantidad,precio_unitario', filters: [{ column: 'venta_id', op: 'in', value: '('+slice.join(',')+')' }] });
+    if (detRes.ok) detalles.push(...detRes.data);
+  }
+  // Agrupar por producto
+  const agg: Record<string, { producto_id: number; cantidad: number; monto: number }> = {};
+  for (const d of detalles) {
+    const pid = Number(d.producto_id);
+    const qty = Number(d.cantidad||0);
+    const monto = qty * Number(d.precio_unitario||0);
+    const k = String(pid);
+    if (!agg[k]) agg[k] = { producto_id: pid, cantidad: 0, monto: 0 };
+    agg[k].cantidad += qty;
+    agg[k].monto += monto;
+  }
+  const list = Object.values(agg).sort((a,b) => b.cantidad - a.cantidad).slice(0, limit);
+  // Map nombres de productos
+  if (list.length) {
+    const prodIds = list.map(p => p.producto_id);
+    const prodsRes = await client.list(TBL.productos, { select: 'id,nombre', filters: [{ column: 'id', op: 'in', value: '('+prodIds.join(',')+')' }] });
+    if (prodsRes.ok) {
+      const nameMap = new Map<number,string>();
+      for (const p of prodsRes.data) nameMap.set(Number(p.id), p.nombre);
+      for (const row of list) (row as any).nombre = nameMap.get(row.producto_id) || `Producto ${row.producto_id}`;
+    }
+  }
+  return { ok: true, data: list } as any;
+}
+
+export async function fetchMetodosPagoDist(fecha_inicio: string, fecha_fin: string, opts?: { sucursal_id?: number|string; vendedor_id?: number|string }) {
+  const aggRes = await fetchVentasAggregate(fecha_inicio, fecha_fin, opts);
+  if (!aggRes.ok) return aggRes as any;
+  const metodoCount = aggRes.data.metodoCount || {};
+  const totalMetodos = Object.values(metodoCount).reduce((a: number, b: any) => a + Number(b||0), 0) || 1;
+  const dist = Object.entries(metodoCount).map(([metodo, count]) => {
+    const cNum = Number(count||0);
+    return { metodo, count: cNum, porcentaje: (cNum/totalMetodos)*100 };
+  });
+  return { ok: true, data: dist } as any;
 }
 
 export async function postSolicitud(payload: any): Promise<{ fromServer: boolean; data: any; error?: any }>{

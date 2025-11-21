@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import { readStore, seedIfEmpty } from '../../utils/localStore';
 import Button from '../../components/Button';
 import Table from '../../components/Table';
-import { updateProduct, deleteProduct, fetchInventoryVW, fetchSucursales, fetchInventoryWithStatus } from '../../utils/api';
+import { updateProduct, deleteProduct, fetchInventoryVW, fetchSucursales, fetchInventoryWithStatus, fetchInventarioAlmacen } from '../../utils/api';
 
 interface Product {
   id: string;
@@ -15,7 +15,6 @@ interface Product {
   precio: number;
   ubicacion: string;
 }
-
 const InventoryManagement: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -24,6 +23,7 @@ const InventoryManagement: React.FC = () => {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [sucursales, setSucursales] = useState<Array<{ id: number; nombre: string }>>([]);
   const [selectedSucursal, setSelectedSucursal] = useState<string>('');
+  const [viewWarehouse, setViewWarehouse] = useState<boolean>(false);
 
   useEffect(() => {
     async function load() {
@@ -31,18 +31,23 @@ const InventoryManagement: React.FC = () => {
       setError(null);
       try {
         seedIfEmpty();
-        const res = selectedSucursal
-          ? await fetchInventoryWithStatus(Number(selectedSucursal))
-          : await fetchInventoryVW();
+        const res = viewWarehouse
+          ? await fetchInventarioAlmacen()
+          : (selectedSucursal
+              ? await fetchInventoryWithStatus(Number(selectedSucursal))
+              : await fetchInventoryVW());
         if (!res.ok) throw new Error('Inventario no disponible');
-        const mapped: Product[] = res.data.map((r: any) => ({
-          id: String(r.id),
-          nombre: r.nombre,
-          descripcion: r.descripcion,
-          cantidad: Number(r.cantidad || 0),
-          precio: Number(r.precio || 0),
-          ubicacion: r.ubicacion || 'Sin ubicación'
-        }));
+        const mapped: Product[] = res.data.map((r: any) => {
+          const idVal = viewWarehouse ? (r.producto_id ?? r.id) : r.id;
+          return {
+            id: String(idVal),
+            nombre: r.nombre,
+            descripcion: r.descripcion || '',
+            cantidad: Number(r.cantidad || 0),
+            precio: Number(r.precio || 0),
+            ubicacion: viewWarehouse ? (r.ubicacion || 'Almacén') : (r.ubicacion || 'Sin ubicación')
+          };
+        });
         setProducts(mapped);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -62,11 +67,10 @@ const InventoryManagement: React.FC = () => {
       }
     }
     load();
-  }, [selectedSucursal]);
+  }, [selectedSucursal, viewWarehouse]);
 
   useEffect(() => {
-    // cargar sucursales para el combo
-    async function loadSuc() {
+    async function loadSucursales() {
       try {
         const res = await fetchSucursales();
         if (res.ok) setSucursales(res.data || []);
@@ -75,16 +79,15 @@ const InventoryManagement: React.FC = () => {
         setSucursales([]);
       }
     }
-    loadSuc();
+    loadSucursales();
   }, []);
 
   const handleDeleteProduct = async (id: string) => {
     if (!confirm('¿Está seguro de eliminar este producto?')) return;
     try {
-      // call backend to mark producto as inactive
       const res = await deleteProduct(id);
       if (res.ok) {
-        setProducts(products.filter(product => product.id !== id));
+        setProducts(prev => prev.filter(product => product.id !== id));
         alert('Producto eliminado exitosamente');
       } else {
         alert('Error al eliminar producto: ' + (res.error || 'error del servidor'));
@@ -109,7 +112,6 @@ const InventoryManagement: React.FC = () => {
   const handleSaveEdit = async () => {
     if (!editingProduct) return;
     const idNum = editingProduct.id;
-    // Prepare payload to send to manager PUT endpoint
     const payload: any = {
       nombre: editingProduct.nombre,
       descripcion: editingProduct.descripcion,
@@ -118,7 +120,6 @@ const InventoryManagement: React.FC = () => {
       activo: 1,
       modificado_por: 1
     };
-
     const res = await updateProduct(idNum, payload);
     if (res.ok) {
       setProducts(prev => prev.map(p => (p.id === editingProduct.id ? { ...p, nombre: editingProduct.nombre, descripcion: editingProduct.descripcion, precio: Number(editingProduct.precio) } : p)));
@@ -133,8 +134,8 @@ const InventoryManagement: React.FC = () => {
   const columns = [
     { key: 'id', header: 'ID' },
     { key: 'nombre', header: 'Nombre' },
-    { 
-      key: 'descripcion', 
+    {
+      key: 'descripcion',
       header: 'Descripción',
       render: (value: string) => (
         <div className="max-w-xs truncate" title={value}>
@@ -142,19 +143,15 @@ const InventoryManagement: React.FC = () => {
         </div>
       )
     },
-    { 
-      key: 'cantidad', 
+    {
+      key: 'cantidad',
       header: 'Cantidad',
       render: (value: number) => (
-        <span className={`font-semibold ${
-          value < 10 ? 'text-accent' : value < 30 ? 'text-warning' : 'text-success'
-        }`}>
-          {value}
-        </span>
+        <span className={`font-semibold ${value < 10 ? 'text-accent' : value < 30 ? 'text-warning' : 'text-success'}`}>{value}</span>
       )
     },
-    { 
-      key: 'precio', 
+    {
+      key: 'precio',
       header: 'Precio',
       render: (value: number) => `$${value.toFixed(2)}`
     },
@@ -164,16 +161,10 @@ const InventoryManagement: React.FC = () => {
       header: 'Acciones',
       render: (_value: any, row: Product) => (
         <div className="flex space-x-2">
-          <button
-            onClick={() => handleEditClick(row)}
-            className="p-1 text-green-primary hover:bg-green-light rounded"
-          >
+          <button onClick={() => handleEditClick(row)} className="p-1 text-green-primary hover:bg-green-light rounded">
             <Edit size={16} />
           </button>
-          <button
-            onClick={() => handleDeleteProduct(row.id)}
-            className="p-1 text-accent hover:bg-red-100 rounded"
-          >
+          <button onClick={() => handleDeleteProduct(row.id)} className="p-1 text-accent hover:bg-red-100 rounded">
             <Trash2 size={16} />
           </button>
         </div>
@@ -181,14 +172,9 @@ const InventoryManagement: React.FC = () => {
     }
   ];
 
-
   return (
     <div className="max-w-7xl mx-auto">
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
-      >
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-3xl font-bold text-text-dark">Gestión de Inventario</h1>
           <div className="flex items-center gap-3">
@@ -198,6 +184,7 @@ const InventoryManagement: React.FC = () => {
                 value={selectedSucursal}
                 onChange={(e) => setSelectedSucursal(e.target.value)}
                 className="border rounded px-3 py-2"
+                disabled={viewWarehouse}
               >
                 <option value="">Todas</option>
                 {sucursales.map(s => (
@@ -205,6 +192,9 @@ const InventoryManagement: React.FC = () => {
                 ))}
               </select>
             </div>
+            <Button variant={viewWarehouse ? 'primary' : 'secondary'} onClick={() => setViewWarehouse(v => !v)}>
+              {viewWarehouse ? 'Ver Sucursales' : 'Ver Almacén'}
+            </Button>
             <Link to="/registro-producto">
               <Button>
                 <Plus size={16} className="mr-2" />
@@ -216,12 +206,8 @@ const InventoryManagement: React.FC = () => {
 
         <div className="bg-white rounded-lg shadow-soft p-6 border border-gray-medium">
           <div className="mb-6">
-            <h2 className="text-lg font-semibold text-text-dark mb-2">
-              Control de Productos
-            </h2>
-            <p className="text-gray-600">
-              Gestione el inventario de productos disponibles
-            </p>
+            <h2 className="text-lg font-semibold text-text-dark mb-2">Control de Productos</h2>
+            <p className="text-gray-600">Gestione el inventario de productos disponibles</p>
           </div>
 
           {error && (
@@ -239,22 +225,21 @@ const InventoryManagement: React.FC = () => {
           <div className="mt-6 pt-4 border-t border-gray-medium">
             <div className="flex flex-wrap gap-4 text-sm">
               <div className="flex items-center space-x-2">
-                <div className="w-3 h-3 bg-accent rounded-full"></div>
+                <div className="w-3 h-3 bg-accent rounded-full" />
                 <span>Stock Bajo (&lt; 10)</span>
               </div>
               <div className="flex items-center space-x-2">
-                <div className="w-3 h-3 bg-warning rounded-full"></div>
+                <div className="w-3 h-3 bg-warning rounded-full" />
                 <span>Stock Medio (10-30)</span>
               </div>
               <div className="flex items-center space-x-2">
-                <div className="w-3 h-3 bg-success rounded-full"></div>
+                <div className="w-3 h-3 bg-success rounded-full" />
                 <span>Stock Adecuado (&gt; 30)</span>
               </div>
             </div>
           </div>
         </div>
       </motion.div>
-      {/* Edit modal */}
       {editing && editingProduct && (
         <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-lg">
@@ -262,7 +247,6 @@ const InventoryManagement: React.FC = () => {
               <h3 className="text-lg font-semibold">Editar Producto</h3>
               <button onClick={() => { setEditing(false); setEditingProduct(null); }} className="text-gray-500">✕</button>
             </div>
-
             <div className="space-y-3">
               <div>
                 <label className="block text-sm font-medium text-gray-700">Nombre</label>
@@ -276,7 +260,6 @@ const InventoryManagement: React.FC = () => {
                 <label className="block text-sm font-medium text-gray-700">Precio</label>
                 <input type="number" step="0.01" className="w-full px-3 py-2 border rounded" value={String(editingProduct.precio)} onChange={(e) => handleEditChange('precio', Number(e.target.value))} />
               </div>
-
               <div className="flex justify-end space-x-3 pt-4">
                 <Button variant="secondary" onClick={() => { setEditing(false); setEditingProduct(null); }}>Cancelar</Button>
                 <Button onClick={handleSaveEdit}>Guardar</Button>
