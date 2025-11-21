@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import Button from '../../components/Button';
 import { readStore, writeStore, seedIfEmpty } from '../../utils/localStore';
 import { useAuth } from '../../context/AuthContext';
-import { fetchVentas, createCorteCaja } from '../../utils/api';
+import { fetchVentas, createCorteCaja, fetchCortesCaja } from '../../utils/api';
 
 type Sale = { folio: string; fecha: string; total: number; metodo_pago: string };
 type Corte = { id: string; fecha_corte: string; ventas_totales: number; monto_total: number; monto_efectivo: number; monto_tarjeta: number; monto_transferencia: number; diferencia: number; observaciones?: string };
@@ -14,6 +14,8 @@ const CorteCaja: React.FC = () => {
   const [efectivoIngresado, setEfectivoIngresado] = useState<number | ''>('');
   const [apiAvailable, setApiAvailable] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [cortes, setCortes] = useState<Corte[]>([]);
+  const [loadingCortes, setLoadingCortes] = useState<boolean>(false);
   const { user } = useAuth();
 
   useEffect(() => {
@@ -52,6 +54,49 @@ const CorteCaja: React.FC = () => {
       setLoading(false);
     }
     load();
+  }, [user]);
+
+  useEffect(() => {
+    async function loadCortes() {
+      if (!user) { setCortes(readStore<Corte[]>('gf_cortes', []).slice(0,5)); return; }
+      setLoadingCortes(true);
+      try {
+        const res: any = await fetchCortesCaja({ vendedor_id: user.id, sucursal_id: user.sucursal_id });
+        if (res.ok) {
+          const rows = Array.isArray(res.data) ? res.data : [];
+          const sample = rows[0] || {};
+          const dateCol = ['fecha_corte','fecha','created_at','fecha_creacion'].find(c => c in sample) || 'fecha_corte';
+          const mapped: Corte[] = rows.map((r: any) => ({
+            id: String(r.id ?? ''),
+            fecha_corte: r[dateCol] || new Date().toISOString(),
+            ventas_totales: Number(r.ventas_totales ?? 0),
+            monto_total: Number(r.monto_total ?? 0),
+            monto_efectivo: Number(r.monto_efectivo ?? 0),
+            monto_tarjeta: Number(r.monto_tarjeta ?? 0),
+            monto_transferencia: Number(r.monto_transferencia ?? 0),
+            diferencia: Number(r.diferencia ?? 0),
+            observaciones: r.observaciones ?? undefined
+          }));
+          // Ordenar desc por fecha y tomar 5
+          mapped.sort((a,b) => new Date(b.fecha_corte).getTime() - new Date(a.fecha_corte).getTime());
+          setCortes(mapped.slice(0,5));
+          setApiAvailable(true);
+        } else {
+          setApiAvailable(false);
+          const local = readStore<Corte[]>('gf_cortes', []);
+          const sorted = [...local].sort((a,b)=> new Date(b.fecha_corte).getTime() - new Date(a.fecha_corte).getTime());
+          setCortes(sorted.slice(0,5));
+        }
+      } catch {
+        setApiAvailable(false);
+        const local = readStore<Corte[]>('gf_cortes', []);
+        const sorted = [...local].sort((a,b)=> new Date(b.fecha_corte).getTime() - new Date(a.fecha_corte).getTime());
+        setCortes(sorted.slice(0,5));
+      } finally {
+        setLoadingCortes(false);
+      }
+    }
+    loadCortes();
   }, [user]);
 
   async function refresh() {
@@ -124,6 +169,28 @@ const CorteCaja: React.FC = () => {
         writeStore('gf_cortes', all);
         setObservaciones(''); setEfectivoIngresado('');
         alert('Corte cerrado y registrado en servidor');
+        // refrescar lista de cortes
+        try {
+          const again: any = await fetchCortesCaja({ vendedor_id: user.id, sucursal_id: user.sucursal_id });
+          if (again.ok) {
+            const rows = Array.isArray(again.data) ? again.data : [];
+            const sample = rows[0] || {};
+            const dateCol = ['fecha_corte','fecha','created_at','fecha_creacion'].find(c => c in sample) || 'fecha_corte';
+            const mapped: Corte[] = rows.map((r: any) => ({
+              id: String(r.id ?? ''),
+              fecha_corte: r[dateCol] || new Date().toISOString(),
+              ventas_totales: Number(r.ventas_totales ?? 0),
+              monto_total: Number(r.monto_total ?? 0),
+              monto_efectivo: Number(r.monto_efectivo ?? 0),
+              monto_tarjeta: Number(r.monto_tarjeta ?? 0),
+              monto_transferencia: Number(r.monto_transferencia ?? 0),
+              diferencia: Number(r.diferencia ?? 0),
+              observaciones: r.observaciones ?? undefined
+            }));
+            mapped.sort((a,b) => new Date(b.fecha_corte).getTime() - new Date(a.fecha_corte).getTime());
+            setCortes(mapped.slice(0,5));
+          }
+        } catch {}
       } else {
         // Fallback local
         const corte: Corte = { id: `LC-${Date.now()}`, fecha_corte: new Date().toISOString(), ventas_totales, monto_total, monto_efectivo, monto_tarjeta, monto_transferencia, diferencia: dif, observaciones };
@@ -132,6 +199,10 @@ const CorteCaja: React.FC = () => {
         writeStore('gf_cortes', all);
         setObservaciones(''); setEfectivoIngresado('');
         alert('Servidor no disponible: corte guardado localmente');
+        // refrescar desde local
+        const local = readStore<Corte[]>('gf_cortes', []);
+        const sorted = [...local].sort((a,b)=> new Date(b.fecha_corte).getTime() - new Date(a.fecha_corte).getTime());
+        setCortes(sorted.slice(0,5));
       }
     } catch (e) {
       console.error('createCorteCaja error', e);
@@ -141,8 +212,24 @@ const CorteCaja: React.FC = () => {
       writeStore('gf_cortes', all);
       setObservaciones(''); setEfectivoIngresado('');
       alert('Error servidor: corte guardado localmente');
+      const local = readStore<Corte[]>('gf_cortes', []);
+      const sorted = [...local].sort((a,b)=> new Date(b.fecha_corte).getTime() - new Date(a.fecha_corte).getTime());
+      setCortes(sorted.slice(0,5));
     }
   }
+
+  const lastFiveGrouped = useMemo(() => {
+    const byDate: Record<string, Corte[]> = {};
+    for (const c of cortes) {
+      const d = new Date(c.fecha_corte);
+      const key = isNaN(d.getTime()) ? String(c.fecha_corte).slice(0,10) : d.toISOString().slice(0,10);
+      if (!byDate[key]) byDate[key] = [];
+      byDate[key].push(c);
+    }
+    // Ordenar fechas desc
+    const keys = Object.keys(byDate).sort((a,b) => new Date(b).getTime() - new Date(a).getTime());
+    return keys.map(k => ({ date: k, items: byDate[k].sort((a,b)=> new Date(b.fecha_corte).getTime() - new Date(a.fecha_corte).getTime()) }));
+  }, [cortes]);
 
   return (
     <div className="max-w-7xl mx-auto">
@@ -185,6 +272,66 @@ const CorteCaja: React.FC = () => {
           <div className="flex justify-end">
             <Button variant="danger" onClick={cerrarCorte} disabled={!user || loading}>Cerrar Corte</Button>
           </div>
+        </div>
+
+        {/* Últimos 5 cortes (agrupados por día) */}
+        <div className="bg-white rounded-lg shadow-soft p-4 border border-gray-medium mt-6">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold">Últimos cortes</h3>
+            <Button variant="secondary" onClick={() => {
+              // simple refresh: trigger re-load cortes
+              if (!user) {
+                const local = readStore<Corte[]>('gf_cortes', []);
+                const sorted = [...local].sort((a,b)=> new Date(b.fecha_corte).getTime() - new Date(a.fecha_corte).getTime());
+                setCortes(sorted.slice(0,5));
+              } else {
+                (async ()=>{
+                  setLoadingCortes(true);
+                  try {
+                    const res: any = await fetchCortesCaja({ vendedor_id: user.id, sucursal_id: user.sucursal_id });
+                    if (res.ok) {
+                      const rows = Array.isArray(res.data) ? res.data : [];
+                      const sample = rows[0] || {};
+                      const dateCol = ['fecha_corte','fecha','created_at','fecha_creacion'].find(c => c in sample) || 'fecha_corte';
+                      const mapped: Corte[] = rows.map((r: any) => ({
+                        id: String(r.id ?? ''),
+                        fecha_corte: r[dateCol] || new Date().toISOString(),
+                        ventas_totales: Number(r.ventas_totales ?? 0),
+                        monto_total: Number(r.monto_total ?? 0),
+                        monto_efectivo: Number(r.monto_efectivo ?? 0),
+                        monto_tarjeta: Number(r.monto_tarjeta ?? 0),
+                        monto_transferencia: Number(r.monto_transferencia ?? 0),
+                        diferencia: Number(r.diferencia ?? 0),
+                        observaciones: r.observaciones ?? undefined
+                      }));
+                      mapped.sort((a,b) => new Date(b.fecha_corte).getTime() - new Date(a.fecha_corte).getTime());
+                      setCortes(mapped.slice(0,5));
+                    }
+                  } finally { setLoadingCortes(false); }
+                })();
+              }
+            }}>Refrescar cortes</Button>
+          </div>
+          {loadingCortes && <div className="text-sm text-gray-600">Cargando cortes...</div>}
+          {!loadingCortes && lastFiveGrouped.length === 0 && (
+            <div className="text-sm text-gray-600">Sin cortes registrados aún.</div>
+          )}
+          {!loadingCortes && lastFiveGrouped.map(group => (
+            <div key={group.date} className="mb-4">
+              <div className="text-xs uppercase tracking-wide text-gray-500 mb-2">{new Date(group.date).toLocaleDateString('es-MX')}</div>
+              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {group.items.map(c => (
+                  <div key={c.id} className="border rounded p-3 bg-gray-50">
+                    <div className="text-xs text-gray-500">Corte #{c.id}</div>
+                    <div className="text-sm font-medium">Total: ${c.monto_total.toFixed(2)}</div>
+                    <div className="text-xs text-gray-600">Ventas: {c.ventas_totales} · Efe: ${c.monto_efectivo.toFixed(2)} · Tj: ${c.monto_tarjeta.toFixed(2)} · Tr: ${c.monto_transferencia.toFixed(2)}</div>
+                    {c.diferencia ? (<div className={`text-xs mt-1 ${c.diferencia === 0 ? 'text-gray-500' : (c.diferencia > 0 ? 'text-emerald-700' : 'text-red-700')}`}>Diferencia: ${c.diferencia.toFixed(2)}</div>) : null}
+                    {c.observaciones && <div className="text-xs text-gray-500 mt-1 line-clamp-2" title={c.observaciones}>Obs: {c.observaciones}</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       </motion.div>
     </div>

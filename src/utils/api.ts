@@ -1,5 +1,5 @@
 import { SupabaseCRUD, type Filter } from './supabaseRest';
-import { readStore } from './localStore';
+import { readStore, writeStore } from './localStore';
 
 // Table/view names can be adjusted if your schema differs.
 const TBL = {
@@ -66,10 +66,28 @@ export async function fetchProducts() {
 }
 
 export async function createProduct(payload: any) {
-  const client = tryClient(); if (!client) return { ok: false, error: 'No server' } as any;
+  const client = tryClient();
+  if (!client) {
+    // Fallback local: guardar en localStorage para desarrollo offline
+    const localKey = 'gf_products';
+    const list = readStore<any[]>(localKey, []);
+    const newId = `LP-${Date.now()}`;
+    const nuevo = {
+      id: newId,
+      nombre: payload.nombre || 'Producto sin nombre',
+      descripcion: payload.descripcion || '',
+      cantidad: 0,
+      precio: Number(payload.precio||0),
+      ubicacion: 'Sin sucursal',
+      categoria: String(payload.categoria_id||''),
+      stock_minimo: Number(payload.stock_minimo||0)
+    };
+    list.unshift(nuevo);
+    writeStore(localKey, list);
+    return { ok: true, data: nuevo, local: true, warning: 'Supabase no configurado: persistido solo en localStorage' } as any;
+  }
   const res = await client.insert(TBL.productos, payload);
   if (res.ok) {
-    // Ensure warehouse inventory row exists (cantidad 0) so gerente/almacen views see product immediately
     try {
       const row = Array.isArray(res.data) ? res.data[0] : res.data;
       const productId = Number(row?.id);
@@ -763,32 +781,79 @@ export async function fetchPedidos(filters?: { estado?: string; proveedor_id?: n
   return noOrder.ok ? noOrder : { ok: false, data: [], error: noOrder.error } as any;
 }
 
-export async function createPedido(payload: { producto_id: number; proveedor_id: number; cantidad: number; creado_por?: number }) {
-  const client = tryClient(); if (!client) return { ok: false, error: 'Supabase client no inicializado' } as any;
-  const base = { producto_id: payload.producto_id, proveedor_id: payload.proveedor_id, cantidad: payload.cantidad, estado: 'pendiente', creado_por: payload.creado_por };
+export async function createPedido(payload: { producto_id: number; proveedor_id: number; cantidad: number; precio_compra: number; solicitante_id?: number }) {
+  const client = tryClient();
+  const base = { producto_id: payload.producto_id, proveedor_id: payload.proveedor_id, solicitante_id: payload.solicitante_id, cantidad: payload.cantidad, precio_compra: payload.precio_compra, estado: 'pendiente' };
+  if (!client) {
+    const key = 'gf_pedidos';
+    const list = readStore<any[]>(key, []);
+    const nuevo = { id: `PED-${Date.now()}`, ...base, fecha_solicitud: new Date().toISOString() };
+    list.unshift(nuevo);
+    writeStore(key, list);
+    return { ok: true, data: nuevo, local: true, warning: 'Pedido guardado localmente (sin servidor)' } as any;
+  }
   return client.insert(TBL.pedidos, base);
 }
 
 export async function approvePedido(id: number|string, aprobado_por?: number) {
-  const client = tryClient(); if (!client) return { ok: false, error: 'Supabase client no inicializado' } as any;
+  const client = tryClient();
   const payload = { estado: 'aprobado', aprobado_por, fecha_aprobacion: new Date().toISOString() };
+  if (!client) {
+    const key = 'gf_pedidos';
+    const list = readStore<any[]>(key, []);
+    const idx = list.findIndex(p => String(p.id) === String(id));
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...payload };
+      writeStore(key, list);
+      return { ok: true, data: list[idx], local: true } as any;
+    }
+    return { ok: false, error: 'Pedido no encontrado localmente' } as any;
+  }
   return client.update(TBL.pedidos, payload, [{ column: 'id', op: 'eq', value: id }]);
 }
 
-export async function receivePedido(id: number|string, datos: { cantidad_recibida: number; recibido_por?: number }) {
-  const client = tryClient(); if (!client) return { ok: false, error: 'Supabase client no inicializado' } as any;
-  // Obtener pedido para validar cantidad
-  const row = await client.findOne(TBL.pedidos, [{ column: 'id', op: 'eq', value: id }], 'id,producto_id,cantidad,estado');
+export async function receivePedido(id: number|string, datos: { recibido_por?: number }) {
+  const client = tryClient();
+  if (!client) {
+    const key = 'gf_pedidos';
+    const list = readStore<any[]>(key, []);
+    const idx = list.findIndex(p => String(p.id) === String(id));
+    if (idx < 0) return { ok: false, error: 'Pedido no encontrado local' } as any;
+    const pedido = list[idx];
+    if (pedido.estado !== 'aprobado') return { ok: false, error: 'Pedido no está aprobado (local)' } as any;
+    const payload = { estado: 'recibido', fecha_recepcion: new Date().toISOString(), recibido_por: datos.recibido_por };
+    list[idx] = { ...pedido, ...payload };
+    // Fallback local: actualizar inventario local almacen
+    try {
+      const invKey = 'gf_inv_almacen';
+      const inv = readStore<any[]>(invKey, []);
+      const prodRow = inv.find(r => String(r.producto_id) === String(pedido.producto_id));
+      if (prodRow) {
+        prodRow.cantidad = Number(prodRow.cantidad||0) + Number(pedido.cantidad||0);
+      } else {
+        inv.push({ producto_id: pedido.producto_id, cantidad: Number(pedido.cantidad||0), ultima_actualizacion: new Date().toISOString() });
+      }
+      writeStore(invKey, inv);
+    } catch {}
+    writeStore(key, list);
+    return { ok: true, data: list[idx], local: true } as any;
+  }
+  // Incluir precio_compra para posible actualización del precio de venta del producto (se usa como precio final según UI)
+  const row = await client.findOne(TBL.pedidos, [{ column: 'id', op: 'eq', value: id }], 'id,producto_id,cantidad,estado,precio_compra');
   if (!row.ok || !row.data) return { ok: false, error: 'Pedido no encontrado' } as any;
   if (row.data.estado !== 'aprobado') return { ok: false, error: 'Pedido no está aprobado' } as any;
-  const cantRec = Number(datos.cantidad_recibida||0);
-  if (cantRec <= 0 || cantRec > Number(row.data.cantidad||0)) return { ok: false, error: 'Cantidad recibida inválida' } as any;
-  // Actualizar pedido como recibido
-  const payload = { estado: 'recibido', cantidad_recibida: cantRec, fecha_recepcion: new Date().toISOString(), recibido_por: datos.recibido_por, empresa_entrega: (datos as any).empresa_entrega ?? null, entregado_por: (datos as any).entregado_por ?? null };
+  const payload = { estado: 'recibido', fecha_recepcion: new Date().toISOString(), recibido_por: datos.recibido_por };
   const upd = await client.update(TBL.pedidos, payload, [{ column: 'id', op: 'eq', value: id }]);
   if (!upd.ok) return upd;
-  // Ajustar inventario de almacén (sumar cantidad recibida)
-  await adjustInventarioAlmacen(Number(row.data.producto_id), cantRec, datos.recibido_por);
+  // Ajustar inventario de almacén sumando la cantidad del pedido
+  try { await adjustInventarioAlmacen(Number(row.data.producto_id), Number(row.data.cantidad||0), datos.recibido_por); } catch {}
+  // Actualizar precio del producto si se proporcionó precio_compra (tomado como precio de venta según requerimiento)
+  try {
+    const precio = Number(row.data.precio_compra);
+    if (!Number.isNaN(precio) && precio > 0) {
+      await updateProduct(Number(row.data.producto_id), { precio });
+    }
+  } catch {}
   return upd;
 }
 

@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { fetchUsuarios } from '../utils/api';
 
 type Role = 'gerente' | 'almacenista' | 'vendedor' | 'unknown';
 
@@ -15,6 +16,7 @@ type AuthContextType = {
   login: (email: string, password: string) => Promise<User>;
   logout: () => void;
   requestPasswordReset: (email: string) => void;
+  updateUser: (partial: Partial<User>) => void;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -44,27 +46,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = async (email: string, _password: string) => {
     // Prefer validating against backend users table (SQL Server) when available.
-    // This will fetch users and match email+password (simple dev auth, no hashing).
-    const BACKEND = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:4000';
-    try {
-      const res = await fetch(`${BACKEND}/api/manager/usuarios`);
-      if (res.ok) {
-        const list = await res.json();
-        if (Array.isArray(list)) {
-    const found = list.find((u: any) => String(u.correo).trim().toLowerCase() === String(email).trim().toLowerCase() && String(u.contrasena) === String(_password));
-          if (found) {
-            const role = (found.rol as Role) || detectRole(email);
-            const id = found.id_usuario ?? found.id ?? 0;
-            const sucursal_id = found.sucursal_id ?? undefined;
-            const newUser: User = { id, name: (found.nombre || email.split('@')[0]), email, role, sucursal_id };
-            setUser(newUser);
-            return newUser;
+    // Only attempt if VITE_API_BASE is explicitly configured to avoid console connection errors.
+    const BACKEND: string | undefined = (import.meta as any).env?.VITE_API_BASE;
+    if (BACKEND && BACKEND.trim()) {
+      try {
+        const res = await fetch(`${BACKEND}/api/manager/usuarios`);
+        if (res.ok) {
+          const list = await res.json();
+          if (Array.isArray(list)) {
+            const found = list.find((u: any) => String(u.correo).trim().toLowerCase() === String(email).trim().toLowerCase() && String(u.contrasena) === String(_password));
+            if (found) {
+              const role = (found.rol as Role) || detectRole(email);
+              const id = found.id_usuario ?? found.id ?? 0;
+              const sucursal_id = found.sucursal_id ?? undefined;
+              const newUser: User = { id, name: (found.nombre || email.split('@')[0]), email, role, sucursal_id };
+              setUser(newUser);
+              return newUser;
+            }
           }
         }
+      } catch (err) {
+        // If backend not available, fall back to email-based role detection below
+        console.warn('Auth: backend no disponible, usando detección por correo.', err);
       }
-    } catch (err) {
-      // If backend not available, fall back to email-based role detection below
-      console.warn('Auth: could not reach backend users endpoint, falling back to heuristic role detection', err);
+    }
+
+    // Intentar validar contra tabla de usuarios vía Supabase (sin API externa)
+    try {
+      const res = await fetchUsuarios();
+      if ((res as any).ok && Array.isArray((res as any).data)) {
+        const list: any[] = (res as any).data;
+        const found = list.find(u => String(u.correo).trim().toLowerCase() === String(email).trim().toLowerCase());
+        if (found && (found.activo ?? true)) {
+          const role = (found.rol as Role) || detectRole(email);
+          const id = Number(found.id ?? 0) || 0;
+          const sucursal_id = found.sucursal_id != null ? Number(found.sucursal_id) : undefined;
+          const newUser: User = { id, name: (found.nombre || email.split('@')[0]), email, role, sucursal_id };
+          setUser(newUser);
+          return newUser;
+        }
+      }
+    } catch (e) {
+      // Ignore and fall back
     }
 
     // Fallback behavior: infer role from email (existing heuristic) and accept any password.
@@ -82,6 +105,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = () => setUser(null);
 
+  const updateUser = (partial: Partial<User>) => {
+    setUser(prev => (prev ? { ...prev, ...partial } : prev));
+  };
+
   const requestPasswordReset = (email: string) => {
     const now = new Date().toISOString();
     const entry = { email, message: 'Solicitud de recuperación de contraseña', createdAt: now };
@@ -96,7 +123,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, requestPasswordReset }}>
+    <AuthContext.Provider value={{ user, login, logout, requestPasswordReset, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

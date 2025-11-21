@@ -1,25 +1,54 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { fetchSucursales, fetchUsuarios } from '../utils/api';
 
 const Login: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const navigate = useNavigate();
-  const { login, requestPasswordReset } = useAuth();
+  const { login, requestPasswordReset, updateUser } = useAuth();
+  const [needsSucursal, setNeedsSucursal] = useState(false);
+  const [sucursales, setSucursales] = useState<Array<{ id: number; nombre: string }>>([]);
+  const [loadingSucursales, setLoadingSucursales] = useState(false);
+  const [selectedSucursal, setSelectedSucursal] = useState<string>('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      setError('');
       const user = await login(email, password);
-      // If backend returned an unknown role, show an error instead of redirecting
+
+      // Verificar existencia real en backend (usuarios). Si no existe => usuario nuevo
+      let newUser = false;
+      try {
+        const res = await fetchUsuarios();
+        if (res.ok && Array.isArray(res.data)) {
+          const exists = res.data.some((u: any) => String(u.correo).toLowerCase() === String(email).toLowerCase());
+          newUser = !exists;
+        }
+      } catch {}
+      // guardamos en variable local; no necesitamos estado
+
+      // Reglas:
+      // - Rol desconocido => error
+      // - Nuevo gerente/almacenista NO permitido (solo existe uno) => error
+      // - Vendedor: si es nuevo o no tiene sucursal asignada => pedir sucursal
       if (!user || user.role === 'unknown') {
         setError('Credenciales incorrectas o rol no reconocido. Verifique usuario/contraseña.');
         return;
       }
+      if (newUser && (user.role === 'gerente' || user.role === 'almacenista')) {
+        setError('Solo existe un gerente y un almacenista. Solicite alta al administrador.');
+        return;
+      }
+      if (user.role === 'vendedor' && (!user.sucursal_id || newUser)) {
+        setNeedsSucursal(true);
+        return; // esperar a que el usuario elija sucursal
+      }
 
-      // Redirect based on role
+      // Redirecciones normales
       if (user.role === 'gerente') navigate('/dashboard');
       else if (user.role === 'vendedor') navigate('/vendedor/dashboard');
       else if (user.role === 'almacenista') navigate('/almacenista/dashboard');
@@ -33,6 +62,29 @@ const Login: React.FC = () => {
     if (!email) return setError('Provee el correo para recuperar');
     requestPasswordReset(email);
     setError('Solicitud de recuperación enviada a peticiones');
+  };
+
+  useEffect(() => {
+    async function loadSucursales() {
+      if (!needsSucursal) return;
+      setLoadingSucursales(true);
+      try {
+        const res = await fetchSucursales();
+        if (res.ok && Array.isArray(res.data)) setSucursales(res.data.map((s: any) => ({ id: Number(s.id), nombre: s.nombre })));
+      } finally {
+        setLoadingSucursales(false);
+      }
+    }
+    loadSucursales();
+  }, [needsSucursal]);
+
+  const confirmSucursal = () => {
+    if (!selectedSucursal) {
+      setError('Selecciona una sucursal para continuar');
+      return;
+    }
+    updateUser({ sucursal_id: Number(selectedSucursal) });
+    navigate('/vendedor/dashboard');
   };
 
   return (
@@ -50,6 +102,27 @@ const Login: React.FC = () => {
         <div className="mt-4 flex justify-between items-center">
           <button onClick={handleRecover} className="text-sm text-blue-600">Recuperar contraseña</button>
         </div>
+
+        {needsSucursal && (
+          <div className="mt-6 p-4 border rounded bg-gray-50">
+            <div className="text-sm font-semibold mb-2">Selecciona tu sucursal</div>
+            <div className="text-xs text-gray-600 mb-3">Detectamos un usuario nuevo de tipo vendedor o sin sucursal asignada.</div>
+            <select
+              disabled={loadingSucursales}
+              value={selectedSucursal}
+              onChange={e => setSelectedSucursal(e.target.value)}
+              className="w-full border rounded px-3 py-2 mb-3"
+            >
+              <option value="">{loadingSucursales ? 'Cargando sucursales...' : 'Elige una sucursal'}</option>
+              {sucursales.map(s => (
+                <option key={s.id} value={s.id}>{s.nombre}</option>
+              ))}
+            </select>
+            <button onClick={confirmSucursal} className="w-full bg-emerald-600 text-white py-2 rounded disabled:opacity-60" disabled={!selectedSucursal}>
+              Continuar
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

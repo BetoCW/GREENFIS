@@ -12,10 +12,7 @@ export default function RecepcionPedidos() {
   const [error, setError] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<number | null>(null);
   const [recepcionEditId, setRecepcionEditId] = useState<number | null>(null);
-  const [recepcionCantidad, setRecepcionCantidad] = useState<string>('');
-  const [empresaEntrega, setEmpresaEntrega] = useState<string>('');
-  const [entregadoPor, setEntregadoPor] = useState<string>('');
-  const [nuevo, setNuevo] = useState<{ producto_id: string; proveedor_id: string; cantidad: string }>({ producto_id: '', proveedor_id: '', cantidad: '' });
+  const [nuevo, setNuevo] = useState<{ producto_id: string; proveedor_id: string; cantidad: string; precio_compra: string }>({ producto_id: '', proveedor_id: '', cantidad: '', precio_compra: '' });
   const [creating, setCreating] = useState(false);
 
   const load = async () => {
@@ -47,43 +44,43 @@ export default function RecepcionPedidos() {
     setProcessingId(null);
   };
 
-  const iniciarRecepcion = (id: number, cantidadSolicitada: number) => {
+  const iniciarRecepcion = (id: number) => {
     setRecepcionEditId(id);
-    setRecepcionCantidad(String(cantidadSolicitada));
-    setEmpresaEntrega('');
-    setEntregadoPor('');
   };
 
   const cancelarRecepcion = () => {
-    setRecepcionEditId(null); setRecepcionCantidad(''); setEmpresaEntrega(''); setEntregadoPor('');
+    setRecepcionEditId(null);
   };
 
   const crearPedido = async () => {
-    const pid = Number(nuevo.producto_id); const prov = Number(nuevo.proveedor_id); const cant = Number(nuevo.cantidad);
-    if (!pid || !prov || !cant || cant <= 0) { alert('Complete producto, proveedor y cantidad (>0)'); return; }
+    const pidStr = nuevo.producto_id.trim();
+    const provStr = nuevo.proveedor_id.trim();
+    const pid = Number(pidStr);
+    const prov = Number(provStr);
+    const cant = Number(nuevo.cantidad);
+    const precio = Number(nuevo.precio_compra);
+    if (!pidStr || !provStr || Number.isNaN(pid) || pid <= 0 || Number.isNaN(prov) || prov <= 0 || Number.isNaN(cant) || cant <= 0 || Number.isNaN(precio) || precio <= 0) {
+      alert('Complete producto, proveedor, cantidad (>0) y precio (>0) con valores numéricos válidos');
+      return;
+    }
     setCreating(true);
     try {
-      const res = await createPedido({ producto_id: pid, proveedor_id: prov, cantidad: cant, creado_por: user?.id });
+      const res = await createPedido({ producto_id: pid, proveedor_id: prov, cantidad: cant, precio_compra: precio, solicitante_id: user?.id });
       if (!res.ok) throw new Error('Error creando pedido');
       const inserted = Array.isArray(res.data) ? res.data[0] : res.data;
       setPedidos(p => [inserted, ...p]);
-      setNuevo({ producto_id: '', proveedor_id: '', cantidad: '' });
+      setNuevo({ producto_id: '', proveedor_id: '', cantidad: '', precio_compra: '' });
     } catch(e:any){ alert(e.message||'Error'); }
     setCreating(false);
   };
 
-  const guardarRecepcion = async (id: number, cantidadSolicitada: number) => {
-    const cantNum = Number(recepcionCantidad);
-    if (Number.isNaN(cantNum) || cantNum <= 0) { alert('Cantidad recibida inválida'); return; }
-    if (cantNum > Number(cantidadSolicitada)) { alert('No puede exceder cantidad solicitada'); return; }
-    if (!empresaEntrega.trim()) { alert('Ingrese empresa que entrega'); return; }
-    if (!entregadoPor.trim()) { alert('Ingrese nombre de quien entrega'); return; }
+  const guardarRecepcion = async (id: number) => {
     if (!confirm('Confirmar recepción de pedido?')) return;
     setProcessingId(id);
     try {
-      const res = await receivePedido(id, { cantidad_recibida: cantNum, recibido_por: user?.id, empresa_entrega: empresaEntrega.trim(), entregado_por: entregadoPor.trim() } as any);
+      const res = await receivePedido(id, { recibido_por: user?.id });
       if (!res.ok) throw new Error('Error registrando recepción');
-      setPedidos(p => p.map(it => it.id === id ? { ...it, estado: 'recibido', cantidad_recibida: cantNum, fecha_recepcion: new Date().toISOString(), recibido_por: user?.id, empresa_entrega: empresaEntrega.trim(), entregado_por: entregadoPor.trim() } : it));
+      setPedidos(p => p.map(it => it.id === id ? { ...it, estado: 'recibido', fecha_recepcion: new Date().toISOString(), recibido_por: user?.id } : it));
       cancelarRecepcion();
     } catch(e:any){ alert(e.message||'Error'); }
     setProcessingId(null);
@@ -127,7 +124,7 @@ export default function RecepcionPedidos() {
       <div className="bg-white rounded-lg shadow-soft p-4 border">
         <div className="mb-6">
           <h2 className="text-lg font-semibold mb-2">Crear nuevo pedido</h2>
-          <div className="grid md:grid-cols-4 gap-3 items-end">
+          <div className="grid md:grid-cols-5 gap-3 items-end">
             <div>
               <label className="block text-xs text-gray-600 mb-1">Producto</label>
               <select className="border px-2 py-1 rounded w-full text-sm" value={nuevo.producto_id} onChange={e=>setNuevo(n=>({...n,producto_id:e.target.value}))}>
@@ -146,6 +143,10 @@ export default function RecepcionPedidos() {
               <label className="block text-xs text-gray-600 mb-1">Cantidad solicitada</label>
               <input className="border px-2 py-1 rounded w-full text-sm" value={nuevo.cantidad} onChange={e=>setNuevo(n=>({...n,cantidad:e.target.value}))} placeholder="0" />
             </div>
+            <div>
+              <label className="block text-xs text-gray-600 mb-1">Precio venta (unidad)</label>
+              <input className="border px-2 py-1 rounded w-full text-sm" value={nuevo.precio_compra} onChange={e=>setNuevo(n=>({...n,precio_compra:e.target.value}))} placeholder="0.00" />
+            </div>
             <div className="flex md:block">
               <Button size="sm" onClick={crearPedido} disabled={creating}>{creating?'Creando...':'Agregar pedido'}</Button>
             </div>
@@ -163,7 +164,7 @@ export default function RecepcionPedidos() {
         )}
         <table className="w-full table-auto">
           <thead>
-            <tr className="text-left text-sm text-gray-600"><th className="px-3 py-2">ID</th><th className="px-3 py-2">Producto</th><th className="px-3 py-2">Proveedor</th><th className="px-3 py-2">Cantidad</th><th className="px-3 py-2">Estado</th><th className="px-3 py-2">Acciones</th></tr>
+            <tr className="text-left text-sm text-gray-600"><th className="px-3 py-2">ID</th><th className="px-3 py-2">Producto</th><th className="px-3 py-2">Proveedor</th><th className="px-3 py-2">Cant.</th><th className="px-3 py-2">Precio</th><th className="px-3 py-2">Estado</th><th className="px-3 py-2">Acciones</th></tr>
           </thead>
           <tbody>
             {pedidos.map((pd) => {
@@ -173,14 +174,9 @@ export default function RecepcionPedidos() {
                   <td className="px-3 py-2 text-sm">{pd.id}</td>
                   <td className="px-3 py-2 text-sm">{getProductoNombre(pd.producto_id)}</td>
                   <td className="px-3 py-2 text-sm">{getProveedorNombre(pd.proveedor_id)}</td>
-                  <td className="px-3 py-2 text-sm">
-                    {pd.cantidad}{pd.cantidad_recibida ? ` / Rec: ${pd.cantidad_recibida}` : ''}
-                    {pd.empresa_entrega && <div className="text-[11px] text-gray-500 mt-1">Empresa: {pd.empresa_entrega}</div>}
-                    {pd.entregado_por && <div className="text-[11px] text-gray-500">Entregado por: {pd.entregado_por}</div>}
-                  </td>
-                  <td className="px-3 py-2 text-sm">
-                    {pd.estado}{pd.estado==='recibido' && pd.cantidad_recibida && pd.cantidad_recibida < pd.cantidad ? ' (parcial)' : ''}
-                  </td>
+                  <td className="px-3 py-2 text-sm">{pd.cantidad}</td>
+                  <td className="px-3 py-2 text-sm">${Number(pd.precio_compra||0).toFixed(2)}</td>
+                  <td className="px-3 py-2 text-sm">{pd.estado}</td>
                   <td className="px-3 py-2 text-sm">
                     <div className="flex flex-col gap-2">
                       {pd.estado === 'pendiente' && (
@@ -189,28 +185,20 @@ export default function RecepcionPedidos() {
                           <Button size="sm" variant="secondary" onClick={()=>rechazarPedido(pd.id)} disabled={processingId===pd.id}>Eliminar</Button>
                         </div>
                       )}
-                      {pd.estado === 'aprobado' && !editing && (
+                      {pd.estado === 'aprobado' && (
                         <div className="flex gap-2">
-                          <Button size="sm" onClick={()=>iniciarRecepcion(pd.id, pd.cantidad)} disabled={processingId===pd.id}>Registrar recepción</Button>
+                          {!editing && <Button size="sm" onClick={()=>iniciarRecepcion(pd.id)} disabled={processingId===pd.id}>Marcar recibido</Button>}
+                          {editing && (
+                            <div className="flex gap-2">
+                              <Button size="sm" onClick={()=>guardarRecepcion(pd.id)} disabled={processingId===pd.id}>Confirmar</Button>
+                              <Button size="sm" variant="secondary" onClick={cancelarRecepcion}>Cancelar</Button>
+                            </div>
+                          )}
                           <Button size="sm" variant="secondary" onClick={()=>rechazarPedido(pd.id)} disabled={processingId===pd.id}>Eliminar</Button>
                         </div>
                       )}
-                      {editing && (
-                        <div className="p-2 border rounded bg-gray-50 flex flex-col gap-2">
-                          <label className="text-xs text-gray-600">Cantidad recibida</label>
-                          <input className="border px-2 py-1 rounded text-sm" value={recepcionCantidad} onChange={e=>setRecepcionCantidad(e.target.value)} />
-                          <label className="text-xs text-gray-600">Empresa que entrega</label>
-                          <input className="border px-2 py-1 rounded text-sm" value={empresaEntrega} onChange={e=>setEmpresaEntrega(e.target.value)} placeholder="Transportista / Proveedor" />
-                          <label className="text-xs text-gray-600">Persona que entrega</label>
-                          <input className="border px-2 py-1 rounded text-sm" value={entregadoPor} onChange={e=>setEntregadoPor(e.target.value)} placeholder="Nombre" />
-                          <div className="flex gap-2 pt-1">
-                            <Button size="sm" onClick={()=>guardarRecepcion(pd.id, pd.cantidad)} disabled={processingId===pd.id}>Guardar</Button>
-                            <Button size="sm" variant="secondary" onClick={cancelarRecepcion}>Cancelar</Button>
-                          </div>
-                        </div>
-                      )}
                       {pd.estado === 'recibido' && (
-                        <div className="text-xs text-green-600">Recibido {pd.cantidad_recibida ? `(${pd.cantidad_recibida})` : ''}</div>
+                        <div className="text-xs text-green-600">Recibido</div>
                       )}
                     </div>
                   </td>
