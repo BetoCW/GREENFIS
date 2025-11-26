@@ -149,7 +149,7 @@ const OrderManagement: React.FC = () => {
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
         <div className="flex justify-between mb-4 items-center">
           <h1 className="text-3xl font-bold text-text-dark">Gestión de Solicitudes</h1>
-          <Button onClick={openNew}>Nueva Solicitud</Button>
+          {/* Botón de nueva solicitud eliminado por requerimiento */}
         </div>
         <div className="flex gap-4 mb-4">
           <Button variant={tab==='pendientes' ? 'primary' : 'secondary'} onClick={() => setTab('pendientes')}>Pendientes</Button>

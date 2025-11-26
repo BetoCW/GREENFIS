@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import Button from '../../components/Button';
 import { useAuth } from '../../context/AuthContext';
-import { fetchInventarioAlmacen, fetchSucursales, createTransferencia, fetchTransferencias } from '../../utils/api';
+import { fetchInventarioAlmacen, fetchSucursales, createTransferencia, fetchTransferencias, updateTransferenciaEstado } from '../../utils/api';
 
 export default function TransferenciasAlmacen() {
   const { user } = useAuth();
@@ -205,7 +205,19 @@ export default function TransferenciasAlmacen() {
                     <td className="px-3 py-2">{t.cantidad}</td>
                     <td className="px-3 py-2">{t.sucursal_destino_id}</td>
                     <td className="px-3 py-2">{new Date(t.fecha_transferencia).toLocaleString()}</td>
-                    <td className="px-3 py-2">{t.estado}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-1 rounded-full text-xs ${t.estado==='completada'?'bg-green-100 text-green-800':t.estado==='en_transito'?'bg-yellow-100 text-yellow-800':'bg-gray-100 text-gray-700'}`}>{t.estado}</span>
+                        <Button size="sm" variant="secondary" onClick={async ()=>{
+                          const next = t.estado === 'completada' ? 'en_transito' : 'completada';
+                          const ok = window.confirm(`Cambiar estado a "${next}" para transferencia ${t.id}?`);
+                          if (!ok) return;
+                          const res = await updateTransferenciaEstado(t.id, next);
+                          if (!res.ok) return alert('No se pudo actualizar el estado');
+                          const trs = await fetchTransferencias(); if (trs.ok) setTransferencias(trs.data);
+                        }}>Toggle</Button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
                 {transferencias.length === 0 && (

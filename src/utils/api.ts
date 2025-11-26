@@ -559,6 +559,28 @@ export async function fetchUsuarios() {
   return { ok: true, data: mapped };
 }
 
+// Obtener un usuario por correo, prefiriendo filtro en servidor
+export async function fetchUsuarioByCorreo(correo: string) {
+  const client = tryClient(); if (!client) return { ok: false, error: 'Supabase client no inicializado' } as any;
+  // Intentar buscar con filtro eq en PostgREST
+  try {
+    const res = await client.list(TBL.usuarios, { select: '*', filters: [{ column: 'correo', op: 'eq', value: String(correo).trim().toLowerCase() }], limit: 1 });
+    if (res.ok && Array.isArray(res.data) && res.data.length > 0) return { ok: true, data: res.data[0] } as any;
+  } catch {}
+  // Fallback: traer todo y filtrar cliente (menos eficiente)
+  try {
+    const all = await client.list(TBL.usuarios, { select: '*', limit: 500 });
+    if (all.ok) {
+      const found = (all.data||[]).find((u: any) => String(u.correo).trim().toLowerCase() === String(correo).trim().toLowerCase());
+      if (found) return { ok: true, data: found } as any;
+      return { ok: false, error: 'not-found' } as any;
+    }
+    return all as any;
+  } catch (e) {
+    return { ok: false, error: e } as any;
+  }
+}
+
 export async function createUsuario(payload: any) {
   const client = tryClient(); if (!client) return { ok: false, error: 'Supabase client no inicializado' } as any;
   const base: any = pick(payload, ['nombre','correo','rol','sucursal_id','contrasena']);
@@ -707,6 +729,29 @@ export async function createTransferencia(payload: { producto_id: number; cantid
   // Ajustar inventario almacén (disminuir)
   await adjustInventarioAlmacen(payload.producto_id, -Math.abs(payload.cantidad), payload.almacenista_id);
   return ins;
+}
+
+// Actualiza el estado de una transferencia y aplica efectos colaterales.
+export async function updateTransferenciaEstado(id: number|string, nuevoEstado: 'en_transito'|'completada'|'pendiente') {
+  const client = tryClient(); if (!client) return { ok: false, error: 'Supabase client no inicializado' } as any;
+  // Obtener transferencia para conocer producto, cantidad y destino
+  const row = await client.findOne(TBL.transferencias, [{ column: 'id', op: 'eq', value: id }], 'id,producto_id,cantidad,sucursal_destino_id,estado');
+  if (!row.ok || !row.data) return { ok: false, error: 'Transferencia no encontrada' } as any;
+  const prev = row.data;
+  const upd = await client.update(TBL.transferencias, { estado: nuevoEstado, fecha_completado: nuevoEstado === 'completada' ? new Date().toISOString() : null }, [{ column: 'id', op: 'eq', value: id }]);
+  if (!upd.ok) return upd;
+  // Si se marca como completada, reflejar en inventario de tienda (sumar cantidad)
+  if (nuevoEstado === 'completada') {
+    try {
+      const producto_id = Number(prev.producto_id);
+      const sucursal_id = Number(prev.sucursal_destino_id);
+      const cantidad = Number(prev.cantidad||0);
+      if (!Number.isNaN(producto_id) && !Number.isNaN(sucursal_id) && cantidad > 0) {
+        await upsertInventarioTienda(producto_id, sucursal_id, cantidad);
+      }
+    } catch {}
+  }
+  return upd;
 }
 
 // =============================

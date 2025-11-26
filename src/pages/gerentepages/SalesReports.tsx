@@ -382,40 +382,7 @@ const SalesReports: React.FC = () => {
           </div>
         </div>
 
-        {/* Reportes formales */}
-        <div className="bg-white rounded-lg shadow-soft p-6 border border-gray-medium">
-          <div className="mb-6">
-            <h2 className="text-lg font-semibold text-text-dark mb-4">
-              Reportes Generados (Vista / PDF)
-            </h2>
-            <p className="text-gray-600">
-              Seleccione los reportes que desea exportar a PDF
-            </p>
-          </div>
-
-          {error && (
-            <div className="mb-4 p-3 rounded border border-yellow-300 bg-yellow-50 text-sm text-yellow-800">
-              <strong>Advertencia:</strong> No se pudieron obtener los datos reales: {error}. Mostrando datos de prueba.
-            </div>
-          )}
-
-          <Table columns={columns} data={reports} />
-
-          <div className="flex items-center justify-between mt-6 pt-4 border-t border-gray-medium">
-            <div className="text-sm text-gray-600">
-              {totalSelected} reporte(s) seleccionado(s)
-            </div>
-            <div className="flex items-center space-x-3">
-              <Button onClick={() => fetchReports()} className="bg-gray-100 text-sm" disabled={isLoading}>
-                {isLoading ? 'Refrescando...' : 'Refrescar'}
-              </Button>
-              <Button onClick={handleGeneratePDF}>
-                <FileText size={16} className="mr-2" />
-                Generar PDF
-              </Button>
-            </div>
-          </div>
-        </div>
+        {/* Se removió la tabla de "Reportes Generados" para mantener solo analíticas */}
       </motion.div>
     </div>
   );

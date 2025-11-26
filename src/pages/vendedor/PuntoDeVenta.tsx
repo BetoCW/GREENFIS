@@ -162,7 +162,7 @@ const PuntoDeVenta: React.FC = () => {
       const all = readStore<any[]>('gf_sales', []);
       all.unshift(sale);
       writeStore('gf_sales', all);
-      setProducts(products.map(p => {
+      setProducts(products.map(p => {  
         const it = cart.find(c => c.productId === p.id);
         if (!it) return p;
         return { ...p, cantidad: Math.max(0, p.cantidad - it.qty) };

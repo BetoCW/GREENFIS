@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { fetchUsuarios } from '../utils/api';
+import { fetchUsuarios, fetchUsuarioByCorreo } from '../utils/api';
 
 type Role = 'gerente' | 'almacenista' | 'vendedor' | 'unknown';
 
@@ -73,34 +73,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Intentar validar contra tabla de usuarios vía Supabase (sin API externa)
     try {
-      const res = await fetchUsuarios();
-      if ((res as any).ok && Array.isArray((res as any).data)) {
-        const list: any[] = (res as any).data;
-        const found = list.find(u => String(u.correo).trim().toLowerCase() === String(email).trim().toLowerCase());
-        if (found && (found.activo ?? true)) {
-          const role = (found.rol as Role) || detectRole(email);
-          const id = Number(found.id ?? 0) || 0;
-          const sucursal_id = found.sucursal_id != null ? Number(found.sucursal_id) : undefined;
-          const newUser: User = { id, name: (found.nombre || email.split('@')[0]), email, role, sucursal_id };
-          setUser(newUser);
-          return newUser;
+      const single = await fetchUsuarioByCorreo(email);
+      if ((single as any).ok && (single as any).data) {
+        const raw = (single as any).data;
+        const activo = raw.activo ?? true;
+        if (!activo) throw new Error('Usuario inactivo');
+        const expected = raw.contrasena != null ? String(raw.contrasena) : undefined;
+        if (expected === undefined) {
+          const BYPASS: string | undefined = (import.meta as any).env?.VITE_DEV_BYPASS_PASSWORD;
+          if (!BYPASS || String(_password) !== String(BYPASS)) throw new Error('No se puede validar la contraseña actualmente');
+        } else if (String(_password) !== expected) {
+          throw new Error('Contraseña incorrecta');
         }
+        // map fields possibly using mapUsuario logic implicitly
+        const id = raw.id_usuario != null ? Number(raw.id_usuario) : (raw.usuario_id != null ? Number(raw.usuario_id) : Number(raw.id ?? 0)) || 0;
+        const role = (raw.rol as Role) || detectRole(email);
+        const sucursal_id = raw.sucursal_id != null ? Number(raw.sucursal_id) : undefined;
+        const newUser: User = { id, name: (raw.nombre || email.split('@')[0]), email, role, sucursal_id };
+        setUser(newUser);
+        return newUser;
       }
     } catch (e) {
-      // Ignore and fall back
+      if (e instanceof Error) throw e;
     }
 
-    // Fallback behavior: infer role from email (existing heuristic) and accept any password.
-    const role = detectRole(email);
-    // set default ids that match the seeded DB in GreenFis.sql (for dev convenience)
-    let id = 99;
-    let sucursal_id = 1;
-    if (role === 'gerente') { id = 1; sucursal_id = 1; }
-    else if (role === 'vendedor') { id = 2; sucursal_id = 1; }
-    else if (role === 'almacenista') { id = 3; sucursal_id = 1; }
-    const newUser: User = { id, name: email.split('@')[0], email, role, sucursal_id };
-    setUser(newUser);
-    return newUser;
+    // Opción de bypass de desarrollo cuando no hay sistemas disponibles
+    const BYPASS: string | undefined = (import.meta as any).env?.VITE_DEV_BYPASS_PASSWORD;
+    if (BYPASS && String(_password) === String(BYPASS)) {
+      const role = detectRole(email);
+      const id = role === 'gerente' ? 1 : role === 'vendedor' ? 2 : role === 'almacenista' ? 3 : 99;
+      const sucursal_id = 1;
+      const newUser: User = { id, name: email.split('@')[0], email, role, sucursal_id };
+      setUser(newUser);
+      return newUser;
+    }
+
+    // Sin validación ni bypass, no permitir login.
+    throw new Error('Credenciales inválidas o sistema de autenticación no disponible');
   };
 
   const logout = () => setUser(null);
