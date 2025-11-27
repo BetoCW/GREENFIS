@@ -776,25 +776,98 @@ export async function fetchDevoluciones(filters?: { estado?: string; producto_id
   return noOrder;
 }
 
-export async function createDevolucionAlmacen(payload: { producto_id: number; sucursal_id?: number; cantidad: number; motivo?: string; tipo?: string; creado_por?: number; venta_id?: number }) {
+export async function createDevolucionAlmacen(payload: { producto_id: number; sucursal_id?: number; cantidad: number; motivo?: string; tipo?: string; creado_por?: number; venta_id?: number; vendedor_id?: number }) {
   const client = tryClient(); if (!client) return { ok: false, error: 'Supabase client no inicializado' } as any;
-  // Detect if venta_id column exists to include it safely
-  let supportsVentaId = false;
-  try {
-    const probe = await client.list(TBL.devoluciones, { select: '*', limit: 1 });
-    if (probe.ok) {
-      const sample = probe.data[0] || {};
-      supportsVentaId = 'venta_id' in sample;
+  // Detect available columns on devoluciones to avoid 400s
+  const probe = await client.list(TBL.devoluciones, { select: '*', limit: 1 });
+  if (!probe.ok) return probe as any;
+  const sample = probe.data[0] || {};
+  const cols = new Set(Object.keys(sample));
+  // Determine accepted estados (avoid custom no-valid state)
+  const estado = cols.has('estado') ? 'pendiente' : undefined; // estados permitidos: pendiente/aprobada/rechazada/completada
+  const base: any = {};
+  if (cols.has('producto_id')) base.producto_id = payload.producto_id;
+  if (cols.has('cantidad')) base.cantidad = payload.cantidad;
+  if (cols.has('sucursal_id')) base.sucursal_id = payload.sucursal_id ?? null;
+  if (cols.has('motivo')) base.motivo = payload.motivo ?? null;
+  if (cols.has('tipo')) base.tipo = payload.tipo ?? null;
+  if (estado) base.estado = estado;
+  if (cols.has('no_apto_venta')) base.no_apto_venta = true;
+  if (cols.has('fecha')) base.fecha = new Date().toISOString();
+  if (cols.has('creado_por')) base.creado_por = payload.creado_por ?? null;
+  if (cols.has('venta_id') && payload.venta_id) base.venta_id = payload.venta_id;
+  if (cols.has('vendedor_id') && payload.vendedor_id) base.vendedor_id = payload.vendedor_id;
+  // Fallback minimal payload: if table is cabecera-only (venta_id, vendedor_id, sucursal_id, motivo)
+  const expectingCabeceraVenta = cols.has('venta_id') && cols.has('vendedor_id') && !cols.has('producto_id') && !cols.has('cantidad');
+  if (expectingCabeceraVenta) {
+    // Must have required NOT NULL columns: venta_id, vendedor_id, sucursal_id, motivo
+    if (!payload.venta_id || !payload.vendedor_id || !payload.sucursal_id || !payload.motivo) {
+      return { ok: false, error: 'Devolución requiere venta_id, vendedor_id, sucursal_id y motivo (según schema actual). Proporcione esos campos.' } as any;
     }
-  } catch {}
-  const base: any = { producto_id: payload.producto_id, sucursal_id: payload.sucursal_id ?? null, cantidad: payload.cantidad, motivo: payload.motivo ?? null, tipo: payload.tipo ?? null, estado: 'para_devolucion', no_apto_venta: true, fecha: new Date().toISOString(), creado_por: payload.creado_por ?? null };
-  if (supportsVentaId && payload.venta_id) base.venta_id = payload.venta_id;
+    base.venta_id = payload.venta_id;
+    base.vendedor_id = payload.vendedor_id;
+    base.sucursal_id = payload.sucursal_id;
+    base.motivo = payload.motivo;
+    if (estado) base.estado = estado;
+  } else if (Object.keys(base).length === 0) {
+    // If we still have nothing, return explanatory error
+    return { ok: false, error: 'No se pudieron mapear columnas para la devolución: revise estructura de tabla.' } as any;
+  }
   return client.insert(TBL.devoluciones, base);
 }
 
 export async function updateDevolucion(id: number|string, payload: any) {
   const client = tryClient(); if (!client) return { ok: false, error: 'Supabase client no inicializado' } as any;
   return client.update(TBL.devoluciones, payload, [{ column: 'id', op: 'eq', value: id }]);
+}
+
+// =============================
+// Detalle Devoluciones helpers
+// =============================
+export async function fetchDetalleDevolucionesByDevolucionIds(ids: Array<number|string>) {
+  const client = tryClient(); if (!client) return { ok: false, data: [], error: 'Supabase client no inicializado' } as any;
+  if (!ids || !ids.length) return { ok: true, data: [] } as any;
+  const chunkSize = 100;
+  const all: any[] = [];
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const slice = ids.slice(i, i + chunkSize);
+    const res = await client.list(TBL.detalle_devoluciones, { select: 'id,devolucion_id,producto_id,cantidad,precio_unitario,subtotal,motivo', filters: [{ column: 'devolucion_id', op: 'in', value: slice }] });
+    if (res.ok) all.push(...res.data);
+  }
+  return { ok: true, data: all } as any;
+}
+
+export function buildDetallesMap(detalles: any[]) {
+  const map = new Map<number, any[]>();
+  for (const d of detalles) {
+    const key = Number(d.devolucion_id);
+    const arr = map.get(key) || [];
+    arr.push({ producto_id: Number(d.producto_id), cantidad: Number(d.cantidad||0), motivo: d.motivo, subtotal: Number(d.subtotal||0) });
+    map.set(key, arr);
+  }
+  return map;
+}
+
+// Ajustar inventario de almacén al completar una devolución:
+// Suma cantidades de detalle_devoluciones por producto y añade al inventario_almacen.
+export async function applyDevolucionToAlmacen(devolucion_id: number) {
+  const client = tryClient(); if (!client) return { ok: false, error: 'Supabase client no inicializado' } as any;
+  // Get detalles for this devolución
+  const detRes = await client.list(TBL.detalle_devoluciones, { select: 'producto_id,cantidad', filters: [{ column: 'devolucion_id', op: 'eq', value: devolucion_id }] });
+  if (!detRes.ok) return detRes as any;
+  const agg: Record<number, number> = {};
+  for (const d of detRes.data) {
+    const pid = Number(d.producto_id);
+    const qty = Number(d.cantidad||0);
+    agg[pid] = (agg[pid]||0) + qty;
+  }
+  for (const [pidStr, qty] of Object.entries(agg)) {
+    const pid = Number(pidStr);
+    if (!Number.isNaN(pid) && qty > 0) {
+      await adjustInventarioAlmacen(pid, qty);
+    }
+  }
+  return { ok: true } as any;
 }
 
 // =============================
@@ -919,54 +992,81 @@ export async function createCorteCaja(payload: { vendedor_id: number; sucursal_i
     const local = { id: `LC-${Date.now()}`, ...base };
     return { ok: false, data: local, error: 'Supabase client no inicializado', local: true } as any;
   }
-  // Probe columns to build safe insert
+  // First try: insert only known schema keys to minimize 400s on unknown columns
+  const knownKeys = [
+    'fecha_corte', 'ventas_totales', 'monto_total', 'monto_efectivo',
+    'monto_tarjeta', 'monto_transferencia', 'diferencia', 'observaciones',
+    'cerrado_por'
+  ];
+  const normalized: any = {};
+  for (const k of knownKeys) {
+    if ((base as any)[k] !== undefined) normalized[k] = (base as any)[k];
+  }
+  let ins = await client.insert(TBL.cortes_caja, normalized);
+  if (ins.ok) {
+    const row = Array.isArray(ins.data) ? ins.data[0] : ins.data;
+    return { ok: true, data: row } as any;
+  }
+
+  // Fallback: probe columns and filter strictly by existing columns
   try {
     const probe = await client.list(TBL.cortes_caja, { select: '*', limit: 1 });
     if (probe.ok) {
       const sample = probe.data[0] || {};
-      // Filter base to only existing columns (plus fecha_corte, vendedor_id, sucursal_id) to avoid 400
       const allowed: any = {};
-      Object.keys(base).forEach(k => { if (k in sample || k === 'fecha_corte' || k === 'vendedor_id' || k === 'sucursal_id') allowed[k] = (base as any)[k]; });
-      const ins = await client.insert(TBL.cortes_caja, allowed);
+      Object.keys(base).forEach(k => { if (k in sample || k === 'fecha_corte') allowed[k] = (base as any)[k]; });
+      ins = await client.insert(TBL.cortes_caja, allowed);
       if (!ins.ok) return ins;
       const row = Array.isArray(ins.data) ? ins.data[0] : ins.data;
       return { ok: true, data: row } as any;
     }
   } catch {}
-  // Fallback simple insert attempt
-  const attempt = await client.insert(TBL.cortes_caja, base);
-  return attempt;
+
+  // Last resort: try full base as-is
+  return client.insert(TBL.cortes_caja, base);
 }
 
 export async function fetchCortesCaja(filters?: { vendedor_id?: number|string; sucursal_id?: number|string; fecha_inicio?: string; fecha_fin?: string }) {
   const client = tryClient(); if (!client) return { ok: false, data: [], error: 'Supabase client no inicializado' } as any;
+  // Probe columns first to avoid filtering on non-existent columns
+  let sample: any = {};
+  try {
+    const probe = await client.list(TBL.cortes_caja, { select: '*', limit: 1 });
+    if (probe.ok) sample = probe.data[0] || {};
+  } catch {}
+
   const f: Filter[] = [];
-  if (filters?.vendedor_id != null && String(filters.vendedor_id).trim() !== '') f.push({ column: 'vendedor_id', op: 'eq', value: filters.vendedor_id });
-  if (filters?.sucursal_id != null && String(filters.sucursal_id).trim() !== '') f.push({ column: 'sucursal_id', op: 'eq', value: filters.sucursal_id });
-  const probe = await client.list(TBL.cortes_caja, { select: '*', limit: 1 });
-  if (!probe.ok) return probe;
-  const sample = probe.data[0] || {};
-  const dateCol = ['fecha_corte','created_at','fecha','fecha_creacion'].find(c => c in sample) || 'id';
-  const wanted = ['id','vendedor_id','sucursal_id','fecha_corte','ventas_totales','monto_total','monto_efectivo','monto_tarjeta','monto_transferencia','diferencia','observaciones'];
-  const selectStr = wanted.filter(c => c in sample || c === 'id').join(',') || '*';
-  const res = await client.list(TBL.cortes_caja, { select: selectStr, filters: f, order: { column: dateCol, ascending: false }, limit: 200 });
-  if (!res.ok) {
-    const noOrder = await client.list(TBL.cortes_caja, { select: selectStr, filters: f, limit: 200 });
-    if (!noOrder.ok) return noOrder;
-    return noOrder;
-  }
-  let data = res.data;
-  if (dateCol && (filters?.fecha_inicio || filters?.fecha_fin)) {
+  const hasVend = 'vendedor_id' in sample;
+  const hasSuc = 'sucursal_id' in sample;
+  if (filters?.vendedor_id != null && String(filters.vendedor_id).trim() !== '' && hasVend) f.push({ column: 'vendedor_id', op: 'eq', value: filters.vendedor_id });
+  if (filters?.sucursal_id != null && String(filters.sucursal_id).trim() !== '' && hasSuc) f.push({ column: 'sucursal_id', op: 'eq', value: filters.sucursal_id });
+
+  // Always select all to avoid missing columns when table is empty or schema varies
+  const res = await client.list(TBL.cortes_caja, { select: '*', filters: f, limit: 500 });
+  if (!res.ok) return res as any;
+
+  let data: any[] = Array.isArray(res.data) ? res.data : [];
+  const dateCandidates = ['fecha_corte','fecha','created_at','fecha_creacion'];
+  if (filters?.fecha_inicio || filters?.fecha_fin) {
     const ini = filters?.fecha_inicio ? new Date(filters.fecha_inicio + 'T00:00:00') : null;
     const fin = filters?.fecha_fin ? new Date(filters.fecha_fin + 'T23:59:59') : null;
-    data = data.filter((v: any) => {
-      const dRaw = v[dateCol];
-      if (!dRaw) return false;
-      const dv = new Date(dRaw);
+    data = data.filter((row: any) => {
+      const raw = dateCandidates.map(k => row?.[k]).find(Boolean);
+      if (!raw) return false;
+      const dv = new Date(raw);
+      if (isNaN(dv.getTime())) return false;
       if (ini && dv < ini) return false;
       if (fin && dv > fin) return false;
       return true;
     });
   }
+  // Sort desc by first available date candidate, fallback to id desc
+  data.sort((a: any, b: any) => {
+    const ra = dateCandidates.map(k => a?.[k]).find(Boolean) || a?.id;
+    const rb = dateCandidates.map(k => b?.[k]).find(Boolean) || b?.id;
+    const da = new Date(ra).getTime();
+    const db = new Date(rb).getTime();
+    return (isNaN(db) ? 0 : db) - (isNaN(da) ? 0 : da);
+  });
   return { ok: true, data } as any;
 }

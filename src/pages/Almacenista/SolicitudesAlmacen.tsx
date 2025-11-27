@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Button from '../../components/Button';
 import { useAuth } from '../../context/AuthContext';
-import { fetchSolicitudes, fetchProducts, fetchSucursales, updateSolicitud, fulfillSolicitudToSucursal, fetchDevoluciones, createDevolucionAlmacen } from '../../utils/api';
+import { fetchSolicitudes, fetchProducts, fetchSucursales, updateSolicitud, fulfillSolicitudToSucursal, fetchDevoluciones, fetchDetalleDevolucionesByDevolucionIds, buildDetallesMap, updateDevolucion, applyDevolucionToAlmacen } from '../../utils/api';
 
 export default function SolicitudesAlmacen() {
   const { user } = useAuth();
@@ -14,23 +14,36 @@ export default function SolicitudesAlmacen() {
   const [procesandoId, setProcesandoId] = useState<number|null>(null);
 
   // Devoluciones
-  const [devoluciones, setDevoluciones] = useState<any[]>([]);
-  const [nuevoDev, setNuevoDev] = useState<{producto_id: string; sucursal_id: string; cantidad: string; motivo: string; tipo: string}>({ producto_id: '', sucursal_id: '', cantidad: '', motivo: '', tipo: ''});
-  const [creatingDev, setCreatingDev] = useState(false);
+  const [devolPendientes, setDevolPendientes] = useState<any[]>([]);
+  const [devolHistorial, setDevolHistorial] = useState<any[]>([]);
+  // Form manual de devolución removido
+  const [detallesMap, setDetallesMap] = useState<Map<number, any[]>>(new Map());
+  const [completingId, setCompletingId] = useState<number|null>(null);
 
   const load = async () => {
     setCargando(true); setError(null);
     try {
-      const [solRes, prods, sucs, devs] = await Promise.all([
+      const [solRes, prods, sucs, devsAll] = await Promise.all([
         fetchSolicitudes({ estado: 'pendiente' }),
         fetchProducts(),
         fetchSucursales(),
-        fetchDevoluciones({ estado: 'para_devolucion' })
+        fetchDevoluciones({})
       ]);
       setSolicitudes(solRes.ok ? solRes.data : []);
       setProductos(Array.isArray(prods) ? prods : []);
       setSucursales(sucs.ok ? sucs.data : []);
-      setDevoluciones(devs.ok ? devs.data : []);
+      const allDevs = devsAll.ok ? (Array.isArray(devsAll.data) ? devsAll.data : []) : [];
+      // Consider estados 'pendiente' (nuevo esquema) or 'para_devolucion' (antiguo).
+      const pend = allDevs.filter((d:any) => ['pendiente','para_devolucion'].includes(String(d.estado ?? 'pendiente')));
+      const hist = allDevs.filter((d:any) => !['pendiente','para_devolucion'].includes(String(d.estado ?? 'pendiente')));
+      setDevolPendientes(pend);
+      setDevolHistorial(hist);
+      // Fetch detalles for all devoluciones to resolve product names and cantidades
+      const ids = allDevs.map((d:any) => Number(d.id)).filter((id:number) => !Number.isNaN(id));
+      if (ids.length) {
+        const detRes = await fetchDetalleDevolucionesByDevolucionIds(ids);
+        if (detRes.ok) setDetallesMap(buildDetallesMap(detRes.data));
+      }
       if (!solRes.ok) setError('No se pudieron cargar solicitudes');
     } catch(e:any) { setError(e.message||String(e)); }
     finally { setCargando(false); }
@@ -79,18 +92,19 @@ export default function SolicitudesAlmacen() {
     setProcesandoId(null);
   };
 
-  const crearDevolucion = async () => {
-    const pid = Number(nuevoDev.producto_id); const sid = nuevoDev.sucursal_id? Number(nuevoDev.sucursal_id): undefined; const cant = Number(nuevoDev.cantidad);
-    if (!pid || !cant || cant <= 0) { alert('Complete producto y cantidad > 0'); return; }
-    setCreatingDev(true);
+
+  const completarDevolucion = async (dev: any) => {
+    setCompletingId(Number(dev.id));
     try {
-      const res = await createDevolucionAlmacen({ producto_id: pid, sucursal_id: sid, cantidad: cant, motivo: nuevoDev.motivo || null as any, tipo: nuevoDev.tipo || null as any, creado_por: user?.id });
-      if (!res.ok) throw new Error('No se pudo registrar devolución');
-      const inserted = Array.isArray(res.data)? res.data[0] : res.data;
-      setDevoluciones(d => [inserted, ...d]);
-      setNuevoDev({ producto_id: '', sucursal_id: '', cantidad: '', motivo: '', tipo: ''});
-    } catch(e:any){ alert(e.message||'Error'); }
-    setCreatingDev(false);
+      const up = await updateDevolucion(dev.id, { estado: 'completada', fecha_completado: new Date().toISOString() });
+      if (!up.ok) throw new Error('No se pudo actualizar devolución');
+      // Ajustar inventario del almacén con detalles
+      await applyDevolucionToAlmacen(Number(dev.id));
+      // Mover a historial en UI
+      setDevolPendientes(p => p.filter(x => x.id !== dev.id));
+      setDevolHistorial(h => [{ ...dev, estado: 'completada' }, ...h]);
+    } catch(e:any) { alert(e.message||'Error'); }
+    setCompletingId(null);
   };
 
   return (
@@ -131,50 +145,80 @@ export default function SolicitudesAlmacen() {
       </div>
 
       <div className="bg-white rounded-lg shadow-soft p-4 border">
-        <h2 className="text-lg font-semibold mb-3">Registrar Devolución a Almacén (para devolución a proveedor)</h2>
-        <div className="grid md:grid-cols-5 gap-3 items-end mb-4">
-          <div>
-            <label className="block text-xs text-gray-600 mb-1">Producto</label>
-            <select className="border px-2 py-1 rounded w-full text-sm" value={nuevoDev.producto_id} onChange={e=>setNuevoDev(n=>({ ...n, producto_id: e.target.value }))}>
-              <option value="">Seleccione</option>
-              {productos.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs text-gray-600 mb-1">Sucursal origen (opcional)</label>
-            <select className="border px-2 py-1 rounded w-full text-sm" value={nuevoDev.sucursal_id} onChange={e=>setNuevoDev(n=>({ ...n, sucursal_id: e.target.value }))}>
-              <option value="">-</option>
-              {sucsList.map((s:any)=> <option key={s.id_sucursal ?? s.id} value={s.id_sucursal ?? s.id}>{s.nombre}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs text-gray-600 mb-1">Cantidad</label>
-            <input className="border px-2 py-1 rounded w-full text-sm" value={nuevoDev.cantidad} onChange={e=>setNuevoDev(n=>({ ...n, cantidad: e.target.value }))} placeholder="0" />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-600 mb-1">Motivo</label>
-            <input className="border px-2 py-1 rounded w-full text-sm" value={nuevoDev.motivo} onChange={e=>setNuevoDev(n=>({ ...n, motivo: e.target.value }))} placeholder="caducidad / dañado / otro" />
-          </div>
-          <div className="flex md:block">
-            <Button size="sm" onClick={crearDevolucion} disabled={creatingDev}>{creatingDev?'Guardando...':'Registrar devolución'}</Button>
-          </div>
-        </div>
+        <h2 className="text-lg font-semibold mb-3">Devoluciones</h2>
         <div className="overflow-x-auto">
+          <h3 className="text-base font-semibold mb-2">Solicitudes de Devolución pendientes</h3>
+          <table className="w-full table-auto mb-6">
+            <thead>
+              <tr className="text-left text-sm text-gray-600"><th className="px-3 py-2">ID</th><th className="px-3 py-2">Producto</th><th className="px-3 py-2">Cantidad</th><th className="px-3 py-2">Motivo</th><th className="px-3 py-2">Estado</th><th className="px-3 py-2">Acciones</th></tr>
+            </thead>
+            <tbody>
+              {devolPendientes.map((d:any)=> (
+                <tr key={d.id} className="border-t">
+                  <td className="px-3 py-2 text-sm">{d.id}</td>
+                  <td className="px-3 py-2 text-sm">{
+                    d.producto_id != null
+                      ? productName(Number(d.producto_id))
+                      : (() => {
+                          const dets = detallesMap.get(Number(d.id)) || [];
+                          if (dets.length === 1) return productName(Number(dets[0].producto_id));
+                          return dets.length > 1 ? 'Varios' : '-';
+                        })()
+                  }</td>
+                  <td className="px-3 py-2 text-sm">{
+                    d.cantidad != null
+                      ? d.cantidad
+                      : (() => {
+                          const dets = detallesMap.get(Number(d.id)) || [];
+                          if (dets.length) return dets.reduce((sum, it) => sum + Number(it.cantidad||0), 0);
+                          return d.total_devolucion != null ? d.total_devolucion : '-';
+                        })()
+                  }</td>
+                  <td className="px-3 py-2 text-sm">{d.motivo || '-'}</td>
+                  <td className="px-3 py-2 text-sm">{d.estado || 'pendiente'}</td>
+                  <td className="px-3 py-2 text-sm">
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={()=>completarDevolucion(d)} disabled={completingId===d.id}>Marcar como completada</Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {devolPendientes.length === 0 && (<tr><td colSpan={5} className="px-3 py-6 text-center text-sm text-gray-500">No hay solicitudes de devolución pendientes</td></tr>)}
+            </tbody>
+          </table>
+
+          <h3 className="text-base font-semibold mb-2">Historial de Devoluciones</h3>
           <table className="w-full table-auto">
             <thead>
               <tr className="text-left text-sm text-gray-600"><th className="px-3 py-2">ID</th><th className="px-3 py-2">Producto</th><th className="px-3 py-2">Cantidad</th><th className="px-3 py-2">Motivo</th><th className="px-3 py-2">Estado</th></tr>
             </thead>
             <tbody>
-              {devoluciones.map((d:any)=> (
+              {devolHistorial.map((d:any)=> (
                 <tr key={d.id} className="border-t">
                   <td className="px-3 py-2 text-sm">{d.id}</td>
-                  <td className="px-3 py-2 text-sm">{productName(Number(d.producto_id))}</td>
-                  <td className="px-3 py-2 text-sm">{d.cantidad}</td>
+                  <td className="px-3 py-2 text-sm">{
+                    d.producto_id != null
+                      ? productName(Number(d.producto_id))
+                      : (() => {
+                          const dets = detallesMap.get(Number(d.id)) || [];
+                          if (dets.length === 1) return productName(Number(dets[0].producto_id));
+                          return dets.length > 1 ? 'Varios' : '-';
+                        })()
+                  }</td>
+                  <td className="px-3 py-2 text-sm">{
+                    d.cantidad != null
+                      ? d.cantidad
+                      : (() => {
+                          const dets = detallesMap.get(Number(d.id)) || [];
+                          if (dets.length) return dets.reduce((sum, it) => sum + Number(it.cantidad||0), 0);
+                          return d.total_devolucion != null ? d.total_devolucion : '-';
+                        })()
+                  }</td>
                   <td className="px-3 py-2 text-sm">{d.motivo || '-'}</td>
-                  <td className="px-3 py-2 text-sm">{d.estado || 'para_devolucion'}</td>
+                  <td className="px-3 py-2 text-sm">{d.estado}</td>
                 </tr>
               ))}
-              {devoluciones.length === 0 && (<tr><td colSpan={5} className="px-3 py-6 text-center text-sm text-gray-500">No hay devoluciones registradas</td></tr>)}
+              {devolHistorial.length === 0 && (<tr><td colSpan={5} className="px-3 py-6 text-center text-sm text-gray-500">No hay historial de devoluciones</td></tr>)}
             </tbody>
           </table>
         </div>
